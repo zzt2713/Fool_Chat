@@ -14,6 +14,75 @@ FoolChat 是一套完整的分布式即时通讯系统项目集合：C++ 服务�
 | [Fool_Chat_Client](./Fool_Chat_Client/) | Qt6 桌面客户端（Fluent Design / ElaWidgetTools）。聊天、通讯录、动态、音乐、公告，以及内嵌的后台管理页 |
 | [fool_chat_admin_go](./fool_chat_admin_go/) | Go Web 后台管理端（:9100）。管理用户、动态、公告、通知、管理员申请，带服务监控、数据备份与 AI 助手 |
 
+## 系统架构
+
+### 服务拓扑
+
+```text
++--------------------+                                    +--------------------+
+| Fool_Chat_Client   |  -- HTTP :8080 /user_login ---->   |    GateServer      |
+|  (Qt6 desktop)     |                                    |  HTTP gateway      |
++---------+----------+                                    +----+----------+----+
+          |                                                   |          |
+          | TCP :8090 / :8091                                 | gRPC     | gRPC
+          | 1005 CHAT_LOGIN                                   |          |
+          |                                                   v          v
+          |                                +--------------------+  +--------------------+
+          +------------------------------->|   ChatServer 1 / 2 |  |   StatusServer     |
+                                           |  TCP + gRPC        |  |   :50052           |
+                                           |  :8090/:8091       |  |   load balancing   |
+                                           +---------+----------+  +---------+----------+
+                                                     |                       |
+                       gRPC Notify* (跨服转发)        |                       |
+                       ChatServer1 <------------->   |                       |
+                                                     |                       |
+          +--------------------+                     |                       |
+          |  VarifyServer      |<--(GateServer 调用)--+-----------------------+
+          |  :50051 邮箱验证码    |
+          +---------+----------+
+                    |
+    +---------------+----------------------+
+    |               |                      |
+    v               v                      v (SMTP)
++--------------------+            +--------------------+          +-----------+
+|      Redis         |            |   MySQL (mhkh)    |          |  163 邮箱  |
+| code_     验证码    |            | user / friend     |          |  发验证码   |
+| utoken_   登录token |            | dynamic / apply   |          +-----------+
+| uip_      用户路由   |            | user_id ...       |
+| logincount 在线人数  |            +--------------------+
++--------------------+
+
++--------------------+
+| fool_chat_admin_go |  Web 管理端 :9100，浏览器或 Qt 客户端
+| 共享 MySQL / Redis  |  内置「后台管理」页访问
++--------------------+
+```
+
+- **GateServer**（:8080 HTTP）：唯一 HTTP 入口，注册 / 登录 / 重置密码 / 验证码转发
+- **StatusServer**（:50052 gRPC）：按 Redis `logincount` 选负载最低的 ChatServer，签发 token
+- **ChatServer 1 / 2**（TCP + gRPC）：实时消息与会话；目标用户不在本机时经 gRPC `Notify*` 跨实例转发，路由靠 Redis `uip_<uid>`
+- **VarifyServer**（:50051 gRPC）：邮箱验证码（Redis `code_`，600 秒有效）
+- **存储**：所有服务共享 Redis（token / 验证码 / 路由 / 在线数）与 MySQL（库 `mhkh`）
+
+### 登录主链路
+
+```text
+① Qt Client ──HTTP POST /user_login {user, passwd}──▶ GateServer
+② GateServer 查 MySQL 校验密码
+③ GateServer ──gRPC GetChatServer──▶ StatusServer
+      · 按 Redis hash logincount 选在线人数最少的 ChatServer
+      · 生成 uuid token 写入 Redis utoken_<uid>
+      · 返回 host / port / token
+④ GateServer ──HTTP 响应──▶ 客户端拿到 {uid, token, host, port}
+⑤ Qt Client ──TCP 连接 ChatServer，发送 1005 CHAT_LOGIN {uid, token}──▶
+⑥ ChatServer 验证 token：
+      · 比对 Redis utoken_<uid>
+      · gRPC StatusService.Login 二次校验
+      · 绑定 session，写 Redis uip_<uid> = 本服名（记录用户所在实例）
+⑦ 登录完成 —— 后续消息使用「4 字节头（2 字节 msg_id + 2 字节长度，网络字节序）
+   + JSON body」的 TCP 协议，单条上限 2KB
+```
+
 ## 目录结构
 
 ```text
