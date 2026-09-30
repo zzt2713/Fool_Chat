@@ -89,16 +89,14 @@ FoolChat 是一套完整的分布式即时通讯系统项目集合：C++ 服务�
 .
 ├── README.md               # 本文件：项目集合总览
 ├── CLAUDE.md               # 开发指引（架构、协议、构建说明）
-├── .gitignore
+├── start_services.bat      # 服务器启动脚本
 ├── GateServer/             # HTTP 网关服务
 ├── VarifyServer/           # 邮箱验证码服务（Node.js gRPC）
 ├── StatusServer/           # 登录状态与负载均衡服务（gRPC）
 ├── ChatServer/             # TCP 实时消息服务实例 1
 ├── ChatServer2/            # TCP 实时消息服务实例 2
 ├── Fool_Chat_Client/       # Qt6 桌面客户端
-├── start_services.bat		   # 服务器启动脚本
 └── fool_chat_admin_go/     # Go 后台管理端
-
 ```
 
 ## 启动顺序
@@ -111,21 +109,40 @@ MySQL + Redis → VarifyServer → StatusServer → ChatServer / ChatServer2 →
 
 ## 项目截图
 
-<!--
-![登录 / 注册](docs/screenshot-login.png)
-![聊天主窗口](docs/screenshot-chat.png)
-![通讯录 / 动态](docs/screenshot-dynamic.png)
-![后台管理端](docs/screenshot-admin.png)
--->
+### 桌面客户端
 
-计划展示的内容：
+![image-20260930164937328](docs/image-20260930164937328.png)
+
+![image-20260930165052783](docs/image-20260930165052783.png)
+
+![image-20260930165125361](docs/image-20260930165125361.png)
+
+![image-20260930165322764](docs/image-20260930165322764.png)
+
+![image-20260930165504225](docs/image-20260930165504225.png)
+
+![image-20260930165304541](docs/image-20260930165304541.png)
+
+![image-20260930165707528](docs/image-20260930165707528.png)
+
+![image-20260930165550632](docs/image-20260930165550632.png)
+
+### 后台管理端
+
+![image-20260930164046370](docs/image-20260930164046370.png)
+
+![image-20260930163812614](docs/image-20260930163812614.png)
+
+![image-20260930164537375](docs/image-20260930164537375.png)
+
+后台管理的内容：
 
 | 界面 | 展示内容 |
 |------|----------|
-| 登录 / 注册 | Fluent Design 风格账号界面，邮箱验证码注册流程 |
-| 聊天主窗口 | 会话列表、文字 / 图片气泡消息、表情、搜索 |
-| 通讯录 / 动态 | 好友申请与验证、朋友圈式动态发布浏览 |
-| 后台管理端 | 用户管理、公告通知、服务监控、数据概览 |
+| 仪表盘 | 数据可视化，操作日志       |
+| 系统监控 | 展示服务开启状态、在线人数 |
+| AI助手 | 通过对话处理信息           |
+| 数据维护 | 数据库信息导出             |
 
 ## 使用的开源项目与致谢
 
