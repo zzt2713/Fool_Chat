@@ -1,0 +1,564 @@
+* {
+    font-family: "Microsoft YaHei"; /* 全局字体，下方规则不再重复声明 */
+}
+
+/* =======================================================
+   认证页外壳：无边框圆角窗，左侧品牌图 + 右侧表单
+   ======================================================= */
+QFrame#leftPanel {
+    background: #2b2f38;
+    border-top-left-radius: 12px;
+    border-bottom-left-radius: 12px;
+}
+
+#bg_image, #head_logo, #app_title, #app_subtitle, #cardTitle {
+    background: transparent;
+}
+
+#app_title {
+    color: #ffffff;
+    font-size: 20pt;
+    font-weight: 700;
+}
+
+#app_subtitle {
+    color: rgba(255, 255, 255, 0.82);
+    font-size: 10pt;
+}
+
+QFrame#rightPanel {
+    background: #ffffff;
+    border-top-right-radius: 12px;
+    border-bottom-right-radius: 12px;
+}
+
+#cardTitle {
+    color: #303133;
+    font-size: 18pt;
+    font-weight: 600;
+}
+
+/* 无边框窗口控制按钮 */
+QPushButton#wndMinBtn, QPushButton#wndCloseBtn {
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: #606266;
+    font-size: 13px;
+}
+QPushButton#wndMinBtn:hover {
+    background: #f0f0f0;
+}
+QPushButton#wndMinBtn:pressed {
+    background: #e4e4e4;
+}
+QPushButton#wndCloseBtn:hover {
+    background: #e81123;
+    color: #ffffff;
+}
+QPushButton#wndCloseBtn:pressed {
+    background: #c50f1f;
+}
+
+/* =======================================================
+   标签与链接
+   ======================================================= */
+/* 忘记密码 */
+QLabel#forget_label {
+    color: #909399;
+    font-size: 14px;
+}
+QLabel#forget_label:hover {
+    color: #409EFF;
+    text-decoration: underline;
+}
+
+/* 搜索框底透明 */
+#search_edit {
+    background-color: transparent;
+}
+
+/* =======================================================
+   输入框 (QLineEdit)
+   ======================================================= */
+QLineEdit {
+    border: 1px solid #DCDFE6;
+    border-radius: 4px;
+    padding: 4px 10px;
+    background-color: #FFFFFF;
+    color: #606266;
+    selection-background-color: #409EFF;
+}
+
+QLineEdit:hover {
+    border-color: #C0C4CC;
+}
+
+QLineEdit:focus {
+    border: 1px solid #409EFF;
+}
+
+/* =======================================================
+   按钮
+   ======================================================= */
+/* 主按钮（登录/注册/确认） */
+QPushButton#loginBtn, QPushButton#sure_btn {
+    background-color: #409EFF;
+    border: 1px solid #409EFF;
+    border-radius: 4px;
+    color: #ffffff;
+}
+
+QPushButton#loginBtn:hover, QPushButton#sure_btn:hover {
+    background-color: #66b1ff;
+    border-color: #66b1ff;
+}
+
+QPushButton#loginBtn:pressed, QPushButton#sure_btn:pressed {
+    background-color: #3a8ee6;
+    border-color: #3a8ee6;
+}
+
+/* 次按钮（注册/取消/返回） */
+QPushButton#regBtn, QPushButton#cencel_btn, QPushButton#return_btn, QPushButton#returnBtn {
+    background-color: #FFFFFF;
+    border: 1px solid #DCDFE6;
+    border-radius: 4px;
+    color: #606266;
+}
+
+QPushButton#regBtn:hover, QPushButton#cencel_btn:hover, QPushButton#return_btn:hover, QPushButton#returnBtn:hover {
+    color: #409EFF;
+    border-color: #c6e2ff;
+    background-color: #ecf5ff;
+}
+
+QPushButton#regBtn:pressed, QPushButton#cencel_btn:pressed, QPushButton#return_btn:pressed, QPushButton#returnBtn:pressed {
+    color: #3a8ee6;
+    border-color: #3a8ee6;
+}
+
+/* 获取验证码 */
+QPushButton#getCode {
+    background-color: transparent;
+    border: 1px solid #409EFF;
+    border-radius: 4px;
+    color: #409EFF;
+    font-size: 12px;
+    min-width: 80px;
+}
+
+QPushButton#getCode:hover {
+    background-color: rgba(64, 158, 255, 0.08);
+    border-color: #66b1ff;
+}
+
+QPushButton#getCode:pressed {
+    background-color: rgba(64, 158, 255, 0.15);
+    border-color: #3a8ee6;
+    color: #3a8ee6;
+}
+
+QPushButton#getCode:disabled {
+    background-color: #f5f7fa;
+    border-color: #ebeef5;
+    color: #c0c4cc;
+}
+
+/* 错误提示（持久红字） */
+#errTip {
+    font-size: 12px;
+}
+#errTip[state='normal'] {
+    color: green;
+}
+#errTip[state='err'] {
+    color: red;
+}
+
+/* =======================================================
+   列表条目统一状态（聊天/联系人/搜索/通知四表通用）
+   hover 浅灰、选中冷灰、失焦选中变淡、圆角 6px
+   ======================================================= */
+#chat_user_list, #con_user_list, #search_list, #Msg_Notice {
+    background-color: transparent;
+    border: none;
+    outline: none;
+}
+
+#chat_user_list::item, #con_user_list::item, #search_list::item, #Msg_Notice::item {
+    border: none;
+    outline: none;
+    border-radius: 6px;
+    background-color: transparent;
+}
+
+/* 四表条目背景统一半透明（深浅主题通用，比原实色更轻） */
+#chat_user_list::item:hover, #con_user_list::item:hover,
+#search_list::item:hover, #Msg_Notice::item:hover {
+    background-color: rgba(128, 128, 128, 0.12);
+}
+
+#chat_user_list::item:pressed, #con_user_list::item:pressed,
+#search_list::item:pressed, #Msg_Notice::item:pressed {
+    background-color: rgba(128, 128, 128, 0.18);
+}
+
+#chat_user_list::item:selected, #con_user_list::item:selected,
+#search_list::item:selected, #Msg_Notice::item:selected {
+    background-color: rgba(128, 128, 128, 0.22);
+    color: #1f1f1f;
+}
+
+/* 选中但列表失去焦点：稍淡 */
+#chat_user_list::item:selected:!active, #con_user_list::item:selected:!active,
+#search_list::item:selected:!active, #Msg_Notice::item:selected:!active {
+    background-color: rgba(128, 128, 128, 0.14);
+    color: #1f1f1f;
+}
+
+/* 选中后鼠标悬停：保持选中色不跳变 */
+#chat_user_list::item:selected:hover, #con_user_list::item:selected:hover,
+#search_list::item:selected:hover, #Msg_Notice::item:selected:hover {
+    background-color: rgba(128, 128, 128, 0.22);
+}
+
+/* 通知列表条目内部不加内边距 */
+#Msg_Notice::item {
+    padding: 0px;
+    margin: 0px;
+}
+
+/* 搜索无结果占位条 */
+#invalid_item {
+    background-color: rgba(128, 128, 128, 0.15);
+    border: none;
+}
+
+/* =======================================================
+   聊天窗口
+   ======================================================= */
+LoadingDlg {
+    background: rgba(128, 128, 128, 0.15);
+}
+
+#title_lb {
+    font-size: 18px;
+}
+
+#chatEdit {
+    background: transparent;
+    border: none;
+    font-size: 18px;
+    padding: 5px;
+}
+
+#tool_wid {
+    background: transparent;
+    border-top: 1px solid rgba(128, 128, 128, 0.35);
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+}
+
+#chat_data_list, #chat_bg, #chat_area {
+    background: transparent;
+    border: none;
+}
+
+/* 气泡上方用户名 */
+#chat_user_name {
+    color: rgb(153, 153, 153);
+    font-size: 14px;
+}
+
+/* 聊天列表条目文字 */
+#user_chat_lib {
+    color: rgba(128, 128, 128, 0.9);
+    font-size: 13px;
+    font-weight: 400;
+}
+
+#user_name {
+    font-size: 15px;
+    font-weight: 500;
+}
+
+#time_wid, #time_lb {
+    color: rgba(140, 140, 140, 0.9);
+    font-size: 11px;
+    font-weight: 400;
+}
+
+/* =======================================================
+   滚动条
+   ======================================================= */
+QScrollBar:vertical {
+    background: transparent;
+    width: 6px;
+    margin: 2px 0;
+    border: none;
+    border-radius: 3px;
+    outline: none;
+}
+QScrollBar::handle:vertical {
+    background: rgba(0, 0, 0, 0.2);
+    min-height: 30px;
+    border-radius: 3px;
+    border: none;
+    margin: 0px 1px;
+    outline: none;
+}
+QScrollBar::handle:vertical:hover {
+    background: rgba(0, 0, 0, 0.35);
+}
+QScrollBar::handle:vertical:pressed {
+    background: rgba(0, 0, 0, 0.5);
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    border: none;
+    background: transparent;
+    height: 0px;
+    outline: none;
+}
+
+QListWidget, QTextEdit {
+    border: none;
+    outline: none;
+    background: transparent;
+}
+
+/* =======================================================
+   好友申请 / 查找成功 / 通知页
+   ======================================================= */
+#FindSuccessDlg {
+    background-color: transparent;
+}
+
+#name_lb {
+    font-size: 14px;
+}
+
+#name_lb2 {
+    font-size: 25px;
+}
+
+#ApplyFriend {
+    border: 2px solid rgba(128, 128, 128, 0.25);
+    font-size: 14px;
+    background: transparent;
+}
+
+#scrollArea #apply_lb {
+    font-size: 16px;
+    font-weight: normal;
+    background: transparent;
+}
+
+/* 申请理由标签（可点击） */
+#tip_lb {
+    padding: 2px 8px;
+    background: rgba(64, 158, 255, 0.15);
+    color: #1677ff;
+    border-radius: 4px;
+    font-size: 12px;
+    border: 1px solid rgba(64, 158, 255, 0.35);
+}
+#tip_lb:hover {
+    background: rgba(64, 158, 255, 0.25);
+    color: #409EFF;
+    border-color: rgba(64, 158, 255, 0.6);
+}
+
+/* 申请标签（ClickedLabel，状态由 SetState 驱动） */
+#tipslb {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    border: none;
+}
+#tipslb[state='normal'] {
+    background: #dbeaf6;
+    color: #1677ff;
+}
+#tipslb[state='hover'] {
+    background: #bae0ff;
+    color: #0958d9;
+}
+#tipslb[state='pressed'] {
+    background: #91caff;
+    color: #003eb3;
+}
+#tipslb[state='selected_normal'],
+#tipslb[state='selected_hover'] {
+    background: #1677ff;
+    color: white;
+}
+#tipslb[state='selected_pressed'] {
+    background: #0958d9;
+    color: white;
+}
+
+/* 弹层透明底 */
+#scrollcontent #scrollArea {
+    background: transparent;
+    border: none;
+}
+
+#ApplyFriend #scrollArea,
+#ApplyFriend #scrollcontent {
+    background-color: transparent;
+    border: none;
+}
+
+ElaScrollArea#scrollArea {
+    background-color: transparent;
+    border: none;
+}
+
+QWidget#scrollcontent {
+    background-color: transparent;
+    border: none;
+}
+
+/* =======================================================
+   好友申请列表条目
+   ======================================================= */
+#user_name_lb {
+    color: rgb(0, 0, 0);
+    font-size: 16px;
+    font-weight: normal;
+}
+
+ApplyFriendItem {
+    background-color: transparent;
+    border-bottom: 2px solid #dbd9d9;
+}
+
+ApplyFriendItem #user_chat_lb {
+    color: #a2a2a2;
+    font-size: 14px;
+}
+
+#already_add_lb, #msg_lb {
+    color: rgb(153, 153, 153);
+    font-size: 12px;
+}
+
+/* 分组标签栏（新的朋友、联系人） */
+#GroupTipItem {
+    background-color: #eaeaea;
+    border: none;
+}
+
+#GroupTipItem ElaText {
+    color: #2e2f30;
+    font-size: 12px;
+    border: none;
+}
+
+#new_friend_item {
+    border-bottom: 1px solid #eaeaea;
+}
+
+/* 好友申请页标题 */
+#friend_apply_lb {
+    font-size: 18px;
+    font-weight: normal;
+}
+
+/* =======================================================
+   通知列表行（NoticeItem 自绘 + 子控件）
+   ======================================================= */
+NoticeItem {
+    background-color: transparent;
+    border-bottom: 2px solid rgba(128, 128, 128, 0.25);
+    min-height: 80px;
+    max-height: 80px;
+    outline: none;
+}
+
+NoticeItem #user_name_lb {
+    font-size: 16px;
+    font-weight: 500;
+}
+
+NoticeItem #msg_lb {
+    color: rgba(128, 128, 128, 0.85);
+    font-size: 12px;
+}
+
+NoticeItem #icon_lb {
+    border-radius: 25px;
+    background-color: rgba(128, 128, 128, 0.2);
+}
+
+NoticeItem ClickedOnceLabel#close_lb {
+    color: #999999;
+}
+
+NoticeItem ClickedOnceLabel#close_lb:hover {
+    color: #ff4444;
+}
+
+/* 认证好友页 */
+#AuthenFriend {
+    border: 2px solid rgba(128, 128, 128, 0.25);
+    background: rgba(128, 128, 128, 0.06);
+    font-size: 14px;
+}
+
+/* =======================================================
+   登录页小组件（记住密码）
+   ======================================================= */
+QCheckBox#rememberCheck {
+    color: #606266;
+    spacing: 6px;
+}
+
+QCheckBox#rememberCheck:hover {
+    color: #409EFF;
+}
+
+/* =======================================================
+   下拉菜单 / 右键菜单统一（白底圆角 + 浅蓝悬停）
+   ======================================================= */
+QMenu {
+    background-color: #ffffff;
+    border: 1px solid #DCDFE6;
+    border-radius: 6px;
+    padding: 4px 0;
+}
+
+QMenu::item {
+    padding: 6px 24px;
+    color: #606266;
+    background: transparent;
+}
+
+QMenu::item:selected {
+    background-color: #ecf5ff;
+    color: #409EFF;
+}
+
+QMenu::separator {
+    height: 1px;
+    background: #EBEEF5;
+    margin: 4px 8px;
+}
+
+/* 通知条目 ✓ 已读按钮 */
+NoticeItem ClickedOnceLabel#read_lb {
+    color: #909399;
+}
+
+NoticeItem ClickedOnceLabel#read_lb:hover {
+    color: #409EFF;
+}
+
+/* 通知详情弹窗元信息（时间/作者/等级） */
+#notice_meta_lb {
+    color: #909399;
+    font-size: 12px;
+}

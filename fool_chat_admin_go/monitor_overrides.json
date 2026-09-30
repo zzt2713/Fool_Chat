@@ -1,0 +1,7 @@
+{
+  "gate_server": "",
+  "status_server": "",
+  "verify_server": "127.0.0.1:50051",
+  "chat_server1": "",
+  "chat_server2": ""
+}

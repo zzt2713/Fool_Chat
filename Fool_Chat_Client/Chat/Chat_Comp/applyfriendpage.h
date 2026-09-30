@@ -1,0 +1,40 @@
+#ifndef APPLYFRIENDPAGE_H
+#define APPLYFRIENDPAGE_H
+
+#include <QWidget>
+#include "userdata.h"
+#include <QJsonArray>
+#include <memory>
+#include <unordered_map>
+#include "applyfrienditem.h"
+
+namespace Ui {
+class ApplyFriendPage;
+}
+
+class ApplyFriendPage : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit ApplyFriendPage(QWidget *parent = nullptr);
+    ~ApplyFriendPage();
+    void AddNewApply(std::shared_ptr<AddFriendApply> apply);
+    // 删除好友时连带移除该人的申请条目
+    void RemoveApply(int uid);
+    // 申请条目置为已同意（同意回包/对方同意通知共用）
+    void markApplyAccepted(int uid);
+    // 刷新场景：按 UserMgr 最新申请数据整页重建
+    void ReloadApplyList();
+protected:
+    void paintEvent(QPaintEvent *event);
+private:
+    void loadApplyList();
+    Ui::ApplyFriendPage *ui;
+    std::unordered_map<int, ApplyFriendItem*> _unauth_items;
+public slots:
+    void slot_auth_rsp(std::shared_ptr<AuthRsp> );
+signals:
+    void sig_show_search(bool);
+};
+
+#endif // APPLYFRIENDPAGE_H

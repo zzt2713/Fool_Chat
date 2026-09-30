@@ -1,0 +1,36 @@
+# 敏感配置备份（真实密码/服务器，勿上传）
+_secrets_backup/
+
+# 日志
+*.log
+*.err.log
+
+# Node
+node_modules/
+
+# MSVC / 构建产物
+x64/
+Win32/
+Debug/
+Release/
+obj/
+*.obj
+*.pdb
+*.ilk
+*.exe
+*.dll
+*.lib
+*.exp
+*.user
+*.opendb
+*.VC.db
+.vs/
+
+# Qt / qmake
+Makefile*
+.qmake.stash
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
+*.o
+bin/

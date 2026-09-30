@@ -1,0 +1,636 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fool Chat 后台管理</title>
+  <link rel="icon" type="image/png" href="/static/icon.png?v=2">
+  <link rel="apple-touch-icon" href="/static/icon.png?v=2">
+  <link rel="stylesheet" href="/static/font-awesome.min.css">
+  <link rel="stylesheet" href="/static/app.css?v=87">
+  <script>
+    // 同步检测登录状态，避免已登录用户刷新时闪现登录页
+    try {
+      if (localStorage.getItem("mhkh_logged_in")) {
+        document.documentElement.classList.add("is-logged-in");
+      } else {
+        document.documentElement.classList.add("is-logged-out");
+      }
+    } catch (e) {}
+  </script>
+</head>
+<body>
+  <section id="loginPage" class="login-page">
+    <div class="login-card" id="loginCard">
+      <div class="login-flip">
+        <div class="login-face login-face-front">
+          <aside class="login-hero">
+            <div class="login-hero-center">
+              <div class="login-hero-logo-wrap">
+                <img class="login-hero-logo" src="/static/icon.png?v=2" alt="Fool Chat">
+              </div>
+              <span class="login-hero-brand">Fool Chat</span>
+              <h2 class="login-hero-desc">欢迎使用<br>Fool Chat 管理后台</h2>
+            </div>
+            <div class="login-hero-footer">© Fool Chat · 管理员控制台</div>
+          </aside>
+
+          <div class="login-form-side">
+            <div class="login-form-head">
+              <h1>账号登录</h1>
+              <p>请使用管理员账号登录后台</p>
+            </div>
+            <form id="loginForm" novalidate>
+              <label class="login-field">
+                <span class="login-field-label">用户名</span>
+                <input name="name" type="text" placeholder="请输入管理员账号" required autocomplete="username">
+              </label>
+              <label class="login-field">
+                <span class="login-field-label">密码</span>
+                <div class="password-field">
+                  <input id="loginPassword" name="password" type="password" placeholder="请输入登录密码" required autocomplete="current-password">
+                  <button id="passwordToggle" class="password-toggle" type="button" title="显示密码" aria-label="显示密码" aria-pressed="false">
+                    <svg class="pw-icon pw-icon-show" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M2.5 12s3.5-7 9.5-7 9.5 7 9.5 7-3.5 7-9.5 7S2.5 12 2.5 12z"></path>
+                      <circle cx="12" cy="12" r="3"></circle>
+                    </svg>
+                    <svg class="pw-icon pw-icon-hide" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M3 3l18 18"></path>
+                      <path d="M10.6 6.2A10.9 10.9 0 0 1 12 6c6 0 9.5 6 9.5 6a17 17 0 0 1-3.4 4.1"></path>
+                      <path d="M6.1 7.5A17 17 0 0 0 2.5 12s3.5 6 9.5 6a10.9 10.9 0 0 0 4.2-.8"></path>
+                      <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"></path>
+                    </svg>
+                  </button>
+                </div>
+              </label>
+              <p class="login-error" id="loginError"></p>
+              <button class="primary login-submit" type="submit">登 录</button>
+            </form>
+            <div class="login-extra">
+              <button type="button" id="forgotPwdBtn" class="link-btn">忘记密码？</button>
+              <button type="button" id="openApplyBtn" class="link-btn">申请管理员权限</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="login-face login-face-back">
+          <div class="login-form-side">
+            <!-- 找回密码 -->
+            <div id="forgotPanel">
+              <div class="login-form-head">
+                <h1>找回密码</h1>
+                <p>通过绑定邮箱重置管理员密码</p>
+              </div>
+              <div class="forgot-steps">
+                <span class="step active" data-step="1">1. 账号</span>
+                <span class="step" data-step="2">2. 验证邮箱</span>
+                <span class="step" data-step="3">3. 新密码</span>
+              </div>
+              <div class="forgot-step" data-step="1">
+                <label class="login-field">
+                  <span class="login-field-label">管理员账号</span>
+                  <input id="forgotName" type="text" placeholder="请输入登录用户名" autocomplete="username">
+                </label>
+                <p class="forgot-tip" id="forgotStep1Tip"></p>
+              </div>
+              <div class="forgot-step" data-step="2" style="display:none;">
+                <label class="login-field">
+                  <span class="login-field-label">完整邮箱</span>
+                  <input id="forgotEmail" type="email" placeholder="请输入账号绑定的完整邮箱" autocomplete="email">
+                  <span class="login-field-hint">提示邮箱：<strong id="forgotMaskedEmail">--</strong>（仅展示部分字符，须填写完整）</span>
+                </label>
+                <label class="login-field">
+                  <span class="login-field-label">邮箱验证码</span>
+                  <div class="forgot-code-row">
+                    <input id="forgotCode" type="text" placeholder="请输入邮箱验证码" maxlength="12" autocomplete="off">
+                    <button type="button" id="forgotSendBtn" class="primary">发送验证码</button>
+                  </div>
+                </label>
+                <p class="forgot-tip" id="forgotStep2Tip"></p>
+              </div>
+              <div class="forgot-step" data-step="3" style="display:none;">
+                <label class="login-field">
+                  <span class="login-field-label">新密码</span>
+                  <input id="forgotPwd1" type="password" placeholder="请输入新密码（至少 6 位）" autocomplete="new-password">
+                </label>
+                <label class="login-field">
+                  <span class="login-field-label">确认新密码</span>
+                  <input id="forgotPwd2" type="password" placeholder="请再次输入新密码" autocomplete="new-password">
+                </label>
+                <p class="forgot-tip" id="forgotStep3Tip"></p>
+              </div>
+              <p class="forgot-tip" id="forgotGlobalTip"></p>
+              <div class="forgot-actions">
+                <button type="button" id="forgotPrevBtn" style="display:none;">上一步</button>
+                <button type="button" id="forgotNextBtn" class="primary">下一步</button>
+              </div>
+              <div class="login-extra">
+                <button type="button" id="forgotBackBtn" class="link-btn">返回登录</button>
+              </div>
+            </div>
+            <!-- 申请管理员 -->
+            <div id="applyPanel" style="display:none;">
+              <div class="login-form-head">
+                <h1>申请管理员</h1>
+                <p>填写以下信息，审核通过后将获得管理员权限</p>
+              </div>
+              <div class="forgot-steps">
+                <span class="step active" data-step="1">1. 账号</span>
+                <span class="step" data-step="2">2. 邮箱</span>
+                <span class="step" data-step="3">3. 提交</span>
+              </div>
+              <div class="apply-step" data-step="1">
+                <label class="login-field">
+                  <span class="login-field-label">账号名称</span>
+                  <input id="applyAccount" type="text" placeholder="请输入你的 Fool Chat 账号" autocomplete="off">
+                </label>
+              </div>
+              <div class="apply-step" data-step="2" style="display:none;">
+                <label class="login-field">
+                  <span class="login-field-label">绑定邮箱</span>
+                  <input id="applyEmail" type="email" placeholder="请输入账号绑定的邮箱" autocomplete="email">
+                </label>
+              </div>
+              <div class="apply-step" data-step="3" style="display:none;">
+                <div class="apply-review-card">
+                  <p><strong>账号：</strong><span id="applyReviewAccount">-</span></p>
+                  <p><strong>邮箱：</strong><span id="applyReviewEmail">-</span></p>
+                  <p class="apply-review-note">提交后将发送至超级管理员审核，请耐心等待。</p>
+                </div>
+              </div>
+              <p class="login-error" id="applyError"></p>
+              <div class="forgot-actions">
+                <button type="button" id="applyPrevBtn" style="display:none;">上一步</button>
+                <button type="button" id="applyNextBtn" class="primary">下一步</button>
+              </div>
+              <div class="login-extra">
+                <button type="button" id="applyBackBtn" class="link-btn">返回登录</button>
+              </div>
+            </div>
+          </div>
+          <aside class="login-hero">
+            <div class="login-hero-center">
+              <div class="login-hero-logo-wrap">
+                <img class="login-hero-logo" src="/static/icon.png?v=2" alt="Fool Chat">
+              </div>
+              <span class="login-hero-brand">Fool Chat</span>
+              <h2 class="login-hero-desc" id="backHeroDesc">找回登录密码<br>请按步骤完成验证</h2>
+            </div>
+            <div class="login-hero-footer">© Fool Chat · 管理员控制台</div>
+          </aside>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div id="bgSourceOverlay" class="modal-overlay">
+    <div class="modal-box bg-source-box">
+      <h2>自定义背景</h2>
+      <p class="bg-source-tip">选择本地图片，或粘贴一张网络图片 URL。</p>
+      <div class="bg-source-actions">
+        <button type="button" id="bgLocalBtn" class="primary">上传本地图片</button>
+        <button type="button" id="bgRandomBtn">恢复随机壁纸</button>
+        <button type="button" id="bgClearBtn">清除背景</button>
+      </div>
+      <label class="bg-source-label" for="bgUrlInput">图片 URL</label>
+      <div class="bg-url-row">
+        <input id="bgUrlInput" type="url" placeholder="https://example.com/background.jpg" autocomplete="off">
+        <button type="button" id="bgUrlApplyBtn" class="primary">应用</button>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="bgSourceCancelBtn">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <button class="sidebar-toggle" id="sidebarToggle" aria-label="菜单">&#9776;</button>
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <img class="brand-mark" src="/static/icon.png?v=2" alt="MHKh">
+      <div>
+        <strong id="brandName">Admin</strong>
+        <span id="brandEmail"></span>
+      </div>
+    </div>
+    <button class="nav active" data-view="dashboard">仪表盘</button>
+    <button class="nav" data-view="users">用户</button>
+    <button class="nav" data-view="dynamics">动态</button>
+    <button class="nav" data-view="star">公告</button>
+    <button class="nav" data-view="monitor">系统监控</button>
+    <button class="nav" data-view="maintenance">数据维护</button>
+    <button class="nav" data-view="friends">好友关系</button>
+    <button class="nav" data-view="applies">好友申请</button>
+    <button class="nav" data-view="notices">通知投递</button>
+    <button class="nav" data-view="email-notify">邮件通知</button>
+    <button class="nav" data-view="admin-apply" id="navAdminApply" style="display:none;">管理员申请</button>
+    <button class="nav" data-view="ai">AI 助手</button>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <h1 id="view-title">仪表盘</h1>
+        <p id="view-subtitle">后台数据与快捷操作</p>
+      </div>
+      <div class="top-actions">
+        <span id="autoRefreshTimer" class="auto-refresh-timer"></span>
+        <button id="bgBtn" title="切换壁纸 (B)"><i class="fa fa-image"></i></button>
+        <button id="customBgBtn" title="自定义背景 (U)"><i class="fa fa-upload"></i></button>
+        <input type="file" id="bgUploadInput" accept="image/*" style="display:none">
+        <button id="bgSaveBtn" title="下载壁纸 (S)"><i class="fa fa-download"></i></button>
+        <button id="bgViewBtn" title="预览壁纸 (V)"><i class="fa fa-arrows-alt"></i></button>
+        <button id="themeBtn" title="暗黑模式 (D)"><i class="fa fa-moon-o"></i></button>
+        <button id="refreshBtn" class="primary" title="刷新 (R)"><i class="fa fa-refresh"></i></button>
+        <button id="logoutBtn" class="danger" title="退出"><i class="fa fa-sign-out"></i></button>
+      </div>
+    </header>
+
+    <section id="dashboard" class="view active">
+      <div class="metrics">
+        <div class="metric"><span>用户</span><strong id="mUsers">-</strong></div>
+        <div class="metric"><span>动态</span><strong id="mDynamics">-</strong></div>
+        <div class="metric"><span>在线用户</span><strong id="mOnlineUsers">-</strong></div>
+        <div class="metric"><span>后台通知</span><strong id="mNotices">-</strong></div>
+        <div class="metric"><span>好友申请通过率</span><strong id="mApplyRate">-</strong></div>
+        <div class="metric"><span>管理员待审核</span><strong id="mPendingAdminApplies">-</strong></div>
+        <div class="metric"><span>累计操作</span><strong id="mTotalOps">-</strong></div>
+        <div class="metric"><span>今日操作</span><strong id="mTodayOps">-</strong></div>
+        <div class="metric"><span>今日新增用户</span><strong id="mTodayUsers">-</strong></div>
+        <div class="metric"><span>今日动态</span><strong id="mTodayDynamics">-</strong></div>
+        <div class="metric"><span>待审核动态</span><strong id="mPendingDynamics">-</strong></div>
+        <div class="metric"><span>今日 AI 对话</span><strong id="mTodayAIChats">-</strong></div>
+      </div>
+      <div class="dashboard-lists">
+        <div class="panel compact-panel">
+          <h2>最近登录用户</h2>
+          <div id="recentLoginList" class="mini-list"></div>
+        </div>
+        <div class="panel compact-panel">
+          <h2>最近异常操作</h2>
+          <div id="recentErrorList" class="mini-list"></div>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>数据趋势</h2>
+        <div class="charts">
+          <div>
+            <div class="chart-title">近 14 天动态发布</div>
+            <canvas id="dynamicTrend" class="line-chart" width="720" height="260"></canvas>
+          </div>
+          <div>
+            <div class="chart-title">好友申请状态</div>
+            <div id="applyStats" class="stat-bars"></div>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>最近操作日志 <span id="lastRefreshTime" class="last-refresh-time"></span></h2>
+        <div class="toolbar">
+          <div class="search-wrap">
+            <input id="logSearch" placeholder="搜索 说明 / 操作者 / 模块">
+            <button class="search-clear" id="logSearchClear">&times;</button>
+          </div>
+          <button type="button" id="searchLogs">搜索</button>
+          <select id="logModuleFilter" style="width:auto;padding:6px 10px;font-size:13px;">
+            <option value="">全部模块</option>
+            <option value="user">user</option>
+            <option value="dynamic">dynamic</option>
+            <option value="dynamic">dynamic</option>
+            <option value="friend">friend</option>
+            <option value="friend_apply">friend_apply</option>
+            <option value="star_notice">star_notice</option>
+            <option value="admin_notice">admin_notice</option>
+            <option value="auth">auth</option>
+            <option value="ai">ai</option>
+            <option value="admin_apply">admin_apply</option>
+          </select>
+          <select id="logOperatorFilter" style="width:auto;padding:6px 10px;font-size:13px;">
+            <option value="">全部操作人</option>
+          </select>
+          <select id="logActionFilter" style="width:120px;padding:6px 10px;font-size:13px;">
+            <option value="">全部操作</option>
+            <option value="create">新增</option>
+            <option value="update">编辑</option>
+            <option value="delete">删除</option>
+            <option value="reset_password">重置密码</option>
+            <option value="update_status">修改状态</option>
+            <option value="appoint_role">任命角色</option>
+            <option value="approve">同意</option>
+            <option value="reject">拒绝</option>
+            <option value="cancel">取消处理</option>
+            <option value="delivered">标记已处理</option>
+            <option value="login">登录</option>
+            <option value="login_failed">登录失败</option>
+            <option value="login_denied">登录拒绝</option>
+          </select>
+          <input id="logStartDate" type="date" style="width:auto;padding:6px 10px;font-size:13px;">
+          <input id="logEndDate" type="date" style="width:auto;padding:6px 10px;font-size:13px;">
+          <button id="exportLogs" style="margin-left:auto">导出</button>
+        </div>
+        <div class="table-wrap"><table id="logTable"></table></div>
+        <div class="pager" id="logPager"></div>
+      </div>
+    </section>
+
+    <section id="monitor" class="view">
+      <div class="metrics">
+        <div class="metric"><span>服务在线</span><strong id="mServiceOnline">-</strong></div>
+        <div class="metric"><span>服务异常</span><strong id="mServiceOffline">-</strong></div>
+        <div class="metric"><span>ChatServer 在线人数</span><strong id="mMonitorOnlineUsers">-</strong></div>
+        <div class="metric"><span>依赖在线</span><strong id="mDependOnline">-</strong></div>
+        <div class="metric"><span>依赖异常</span><strong id="mDependOffline">-</strong></div>
+        <div class="metric"><span>刷新时间</span><strong id="mMonitorRefresh">-</strong></div>
+      </div>
+      <div class="toolbar">
+        <button class="primary" id="monitorRefreshBtn">刷新状态</button>
+        <button id="monitorConfigToggle">编辑监控地址</button>
+      </div>
+      <div class="monitor-config-panel" id="monitorConfigPanel" style="display:none">
+        <div class="monitor-config-row">
+          <label>MySQL</label>
+          <input id="mcMySQL" placeholder="127.0.0.1:3306">
+        </div>
+        <div class="monitor-config-row">
+          <label>Redis</label>
+          <input id="mcRedis" placeholder="127.0.0.1:6379">
+        </div>
+        <div class="monitor-config-row">
+          <label>GateServer</label>
+          <input id="mcGateServer" placeholder="127.0.0.1:8080">
+        </div>
+        <div class="monitor-config-row">
+          <label>StatusServer</label>
+          <input id="mcStatusServer" placeholder="127.0.0.1:50052">
+        </div>
+        <div class="monitor-config-row">
+          <label>VerifyServer</label>
+          <input id="mcVerifyServer" placeholder="127.0.0.1:50051">
+        </div>
+        <div class="monitor-config-row">
+          <label>ChatServer1</label>
+          <input id="mcChatServer1" placeholder="127.0.0.1:8090">
+        </div>
+        <div class="monitor-config-row">
+          <label>ChatServer2</label>
+          <input id="mcChatServer2" placeholder="127.0.0.1:8091">
+        </div>
+        <div class="monitor-config-actions">
+          <button class="primary" id="monitorConfigSave">保存</button>
+          <button id="monitorConfigReset">重置为默认</button>
+        </div>
+      </div>
+      <div class="monitor-grid" id="serviceCards"></div>
+      <div class="panel">
+        <h2>服务详情</h2>
+        <div class="table-wrap"><table id="serviceStatusTable"></table></div>
+      </div>
+      <div class="panel">
+        <h2>基础依赖</h2>
+        <div class="table-wrap"><table id="dependStatusTable"></table></div>
+      </div>
+    </section>
+
+    <section id="maintenance" class="view">
+      <div class="metrics">
+        <div class="metric"><span>用户</span><strong id="bkUsers">-</strong></div>
+        <div class="metric"><span>动态</span><strong id="bkDynamics">-</strong></div>
+        <div class="metric"><span>操作日志</span><strong id="bkLogs">-</strong></div>
+        <div class="metric"><span>好友关系</span><strong id="bkFriends">-</strong></div>
+        <div class="metric"><span>好友申请</span><strong id="bkApplies">-</strong></div>
+        <div class="metric"><span>后台通知</span><strong id="bkNotices">-</strong></div>
+        <div class="metric"><span>管理员申请</span><strong id="bkAdminApps">-</strong></div>
+        <div class="metric"><span>邮件草稿</span><strong id="bkEmailDrafts">-</strong></div>
+      </div>
+      <div class="panel">
+        <h2>数据库连接信息</h2>
+        <div class="table-wrap"><table id="maintenanceDbTable"></table></div>
+      </div>
+      <div class="panel">
+        <h2>数据备份</h2>
+        <div class="maintenance-actions">
+          <button id="backupUsersCsv">导出用户</button>
+          <button id="backupDynamicsCsv">导出动态</button>
+          <button id="backupLogsCsv">导出日志</button>
+          <button id="backupFriendsCsv">导出好友</button>
+          <button id="backupNoticesCsv">导出通知</button>
+          <button id="backupStarNoticesCsv">导出公告</button>
+          <button id="backupAdminAppsCsv">导出申请</button>
+          <button id="backupEmailDraftsCsv">导出邮件</button>
+          <button id="backupAllCsv" class="primary">一键导出全部 CSV</button>
+          <button id="backupAllExcel" class="primary">一键导出 Excel</button>
+          <button id="maintenanceRefreshBtn">刷新统计</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>数据量详情</h2>
+        <div class="table-wrap"><table id="maintenanceCountTable"></table></div>
+      </div>
+    </section>
+
+    <section id="users" class="view">
+      <div class="toolbar">
+        <button class="primary" id="createUserBtn">创建账号</button>
+        <div class="search-wrap">
+          <input id="userSearch" placeholder="搜索 UID / 用户名 / 邮箱 / 昵称">
+          <button class="search-clear" id="userSearchClear">&times;</button>
+        </div>
+        <button type="button" id="searchUsers">搜索</button>
+        <button id="exportUsers" style="margin-left:auto">导出</button>
+      </div>
+      <div class="batch-bar" id="userBatchBar">
+        <span id="userBatchCount">已选 0 项</span>
+        <button class="danger" id="batchDeleteUsers">批量删除</button>
+        <button id="batchDeselectUsers">取消选择</button>
+      </div>
+      <div class="table-wrap"><table id="usersTable"></table></div>
+      <div class="pager" id="usersPager"></div>
+    </section>
+
+    <section id="dynamics" class="view">
+      <div class="toolbar">
+        <button class="primary" id="createDynamicBtn">发布动态</button>
+        <div class="search-wrap">
+          <input id="dynamicSearch" placeholder="搜索 UID / 用户名 / 内容">
+          <button class="search-clear" id="dynamicSearchClear">&times;</button>
+        </div>
+        <button type="button" id="searchDynamics">搜索</button>
+        <select id="dynamicStatusFilter" style="width:auto;padding:6px 10px;font-size:13px;">
+          <option value="">全部状态</option>
+          <option value="0">正常</option>
+          <option value="1">审核中</option>
+          <option value="2">违规隐藏</option>
+        </select>
+        <button type="button" id="aiReviewDynamicsBtn" class="danger" style="margin-left:auto">AI 自动审核</button>
+        <button id="exportDynamics">导出</button>
+      </div>
+      <div class="table-wrap"><table id="dynamicTable"></table></div>
+      <div class="pager" id="dynamicPager"></div>
+    </section>
+
+    <section id="applies" class="view">
+      <div class="table-wrap"><table id="applyTable"></table></div>
+      <div class="pager" id="applyPager"></div>
+    </section>
+
+    <section id="friends" class="view">
+      <div class="toolbar">
+        <div class="search-wrap">
+          <input id="friendSearch" placeholder="搜索 UID / 用户名 / 昵称">
+          <button class="search-clear" id="friendSearchClear">&times;</button>
+        </div>
+        <button type="button" id="searchFriends">搜索</button>
+      </div>
+      <div class="table-wrap"><table id="friendTable"></table></div>
+      <div class="pager" id="friendPager"></div>
+    </section>
+
+    <section id="star" class="view">
+      <div class="toolbar">
+        <button class="primary" id="createStarBtn">新增公告</button>
+        <div class="search-wrap">
+          <input id="starSearch" placeholder="搜索标题 / 作者 / 内容">
+          <button class="search-clear" id="starSearchClear">&times;</button>
+        </div>
+        <button type="button" id="searchStar">搜索</button>
+        <button id="exportStar" style="margin-left:auto">导出</button>
+      </div>
+      <div class="table-wrap"><table id="starTable"></table></div>
+      <div class="pager" id="starPager"></div>
+    </section>
+
+    <section id="notices" class="view">
+      <div class="toolbar">
+        <button class="primary" id="createNoticeBtn">创建通知</button>
+        <div class="search-wrap">
+          <input id="noticeSearch" placeholder="搜索标题 / 内容 / 等级">
+          <button class="search-clear" id="noticeSearchClear">&times;</button>
+        </div>
+        <button type="button" id="searchNotices">搜索</button>
+        <button id="exportNotices" style="margin-left:auto">导出</button>
+      </div>
+      <div class="table-wrap"><table id="noticeTable"></table></div>
+      <div class="pager" id="noticePager"></div>
+    </section>
+
+    <section id="admin-apply" class="view">
+      <div class="toolbar">
+        <select id="applyStatusFilter" style="width:120px;padding:6px 12px;font-size:13px;">
+          <option value="">全部状态</option>
+          <option value="pending">待审核</option>
+          <option value="approved">已通过</option>
+          <option value="rejected">已拒绝</option>
+        </select>
+        <button type="button" id="aiRejectAllPending" class="danger" style="margin-left:auto">AI 一键拒绝所有待审</button>
+        <button type="button" id="refreshAdminApply">刷新</button>
+      </div>
+      <div class="table-wrap"><table id="adminApplyTable"></table></div>
+      <div class="pager" id="adminApplyPager"></div>
+    </section>
+
+    <section id="email-notify" class="view">
+      <div class="toolbar">
+        <button class="primary" id="createEmailBtn">新建邮件</button>
+        <select id="emailStatusFilter" style="width:120px;padding:6px 12px;font-size:13px;">
+          <option value="">全部状态</option>
+          <option value="draft">草稿</option>
+          <option value="sending">发送中</option>
+          <option value="sent">已发送</option>
+          <option value="failed">发送失败</option>
+        </select>
+        <button type="button" id="searchEmailDraft">刷新</button>
+      </div>
+      <div class="table-wrap"><table id="emailDraftTable"></table></div>
+      <div class="pager" id="emailDraftPager"></div>
+    </section>
+
+    <section id="ai" class="view">
+      <div class="ai-layout">
+        <div class="panel ai-panel">
+          <h2>AI 管理助手</h2>
+          <div id="aiMessages" class="ai-messages">
+            <div class="ai-message assistant">你好，我是Fool Chat后台管理AI小助手，有任何问题都可以向我提问！</div>
+          </div>
+          <div id="aiPendingBox" class="ai-pending-box">
+            <div id="aiPendingText"></div>
+            <input id="aiDeletePassword" type="password" placeholder="高危删除需要输入二级密码">
+            <div class="ai-pending-actions">
+              <button id="aiCancelAction">取消</button>
+              <button id="aiConfirmAction" class="danger">确认执行</button>
+            </div>
+          </div>
+          <div class="ai-input-row">
+            <div class="ai-input-wrap">
+              <textarea id="aiInput" rows="3" placeholder="和 AI 助手对话，或点击右侧能力快速插入命令..."></textarea>
+              <div class="ai-input-hint">Enter 发送，Shift+Enter 换行</div>
+            </div>
+            <button id="aiSendBtn" class="primary">发送</button>
+          </div>
+        </div>
+        <div class="ai-side-panel">
+          <div class="panel ai-help-panel">
+            <h2>可用能力</h2>
+            <div class="ai-help-list">
+              <button type="button" class="ai-help-item" data-template="查询 uid [UID] 的用户">查询用户</button>
+              <button type="button" class="ai-help-item" data-template="查询动态 [动态ID]">查询动态</button>
+              <button type="button" class="ai-help-item" data-template="查询最近 20 条操作日志">查询日志</button>
+              <button type="button" class="ai-help-item" data-template="查询当前在线用户">在线用户</button>
+              <button type="button" class="ai-help-item" data-template="查询待审核动态">待审动态</button>
+              <button type="button" class="ai-help-item" data-template="把待审核动态按 UID 分组">待审分组</button>
+              <button type="button" class="ai-help-item" data-template="查询今天异常操作">异常操作</button>
+              <button type="button" class="ai-help-item" data-template="生成运营日报">运营日报</button>
+              <button type="button" class="ai-help-item" data-template="查询通知投递记录">查通知</button>
+              <button type="button" class="ai-help-item" data-template="查询好友关系">好友关系</button>
+              <button type="button" class="ai-help-item" data-template="查询管理员列表">管理员</button>
+              <button type="button" class="ai-help-item" data-template="帮我生成一条公告：标题 [标题] 内容 [内容]">生成公告</button>
+              <button type="button" class="ai-help-item" data-template="搜索 [关键词]">聚合搜索</button>
+              <button type="button" class="ai-help-item" data-template="把动态 [动态ID] 设为隐藏">隐藏动态</button>
+              <button type="button" class="ai-help-item" data-template="把动态 [动态ID] 恢复为正常">恢复动态</button>
+              <button type="button" class="ai-help-item" data-template="给 uid [UID] 发送一条通知：[通知内容]">发送通知</button>
+              <button type="button" class="ai-help-item" data-template="换一张壁纸">切换壁纸</button>
+              <button type="button" class="ai-help-item" data-template="下载当前壁纸">下载壁纸</button>
+              <button type="button" class="ai-help-item" data-template="打开用户页面">跳转页面</button>
+              <button type="button" class="ai-help-item" data-template="切换暗黑主题">切换主题</button>
+              <button type="button" class="ai-help-item ai-help-danger" data-template="自动审批待审核动态">AI 自动审批动态（高危）</button>
+              <button type="button" class="ai-help-item ai-help-danger" data-template="删除 uid [UID] 的用户">删除用户（高危）</button>
+            </div>
+          </div>
+          <div class="panel ai-sessions-panel">
+            <div class="ai-sessions-header">
+              <h2>历史聊天</h2>
+              <button id="aiNewChatBtn" class="primary" type="button">+ 新建</button>
+            </div>
+            <div id="aiSessionsList" class="ai-sessions-list"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast"><span class="toast-spinner"></span><span class="toast-msg"></span></div>
+  <div id="loading"><div></div><span>加载中...</span></div>
+  <div id="modalOverlay" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-icon" id="modalIcon">!</div>
+      <p class="modal-text" id="modalText"></p>
+      <input id="modalPassword" class="modal-password" type="password" placeholder="请输入二级验证密码" autocomplete="off">
+      <div class="modal-actions">
+        <button id="modalCancel">取消</button>
+        <button id="modalConfirm" class="primary">确定</button>
+      </div>
+    </div>
+  </div>
+  <div id="formModalOverlay" class="modal-overlay">
+    <div class="modal-box form-modal-box">
+      <h2 id="formModalTitle" style="margin-bottom:16px;font-size:17px;"></h2>
+      <form id="modalForm" class="form-grid" novalidate></form>
+      <div class="modal-actions" style="margin-top:16px;">
+        <button id="formModalCancel">取消</button>
+        <button id="formModalSubmit" class="primary" type="button">确定</button>
+      </div>
+    </div>
+  </div>
+  <script src="/static/xlsx.full.min.js"></script>
+  <script src="/static/app.js?v=79"></script>
+</body>
+</html>
+

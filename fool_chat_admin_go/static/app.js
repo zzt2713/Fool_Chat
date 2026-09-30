@@ -1,0 +1,3098 @@
+﻿const titles = {
+  dashboard: ["仪表盘", "后台数据与快捷操作"],
+  monitor: ["系统监控", "查看分布式 IM 服务与基础依赖状态"],
+  maintenance: ["数据维护", "导出备份与数据库概况"],
+  users: ["用户", "查看与搜索用户"],
+  dynamics: ["动态", "发布和管理动态"],
+  friends: ["好友关系", "查看并删除好友关系"],
+  applies: ["好友申请", "查看并更新申请状态"],
+  star: ["公告", "管理 StarNotice 公告"],
+  notices: ["通知投递", "创建供客户端弹窗的后台通知"],
+  "admin-apply": ["管理员申请", "审核管理员权限申请"],
+  "email-notify": ["邮件通知", "发送邮件通知给用户"],
+  ai: ["AI 助手", "您的AI聊天助手"],
+};
+
+let currentView = localStorage.getItem("mhkh_admin_view") || "dashboard";
+let pendingRequests = 0;
+let lastAnalyticsData = null;
+const PAGE_SIZE = 20;
+const pageState = { users: 1, dynamics: 1, friends: 1, applies: 1, star: 1, notices: 1, logs: 1, "admin-apply": 1, "email-notify": 1 };
+const pageSizeState = {};
+const selectedIds = { users: new Set() };
+const roleLabels = { 0: "普通用户", 1: "管理员", 2: "超级管理员" };
+
+function renderOnlineStatus(row) {
+  const online = Number(row.status || 0) === 1;
+  return `<span class="online-pill ${online ? "is-online" : "is-offline"}"><span class="online-dot"></span>${online ? "\u5728\u7ebf" : "\u79bb\u7ebf"}</span>`;
+}
+const actionLabels = {
+  create: "新增",
+  update: "编辑",
+  delete: "删除",
+  reset_password: "重置密码",
+  update_status: "修改状态",
+  appoint_role: "任命角色",
+  approve: "同意",
+  reject: "拒绝",
+  cancel: "取消处理",
+  delivered: "标记已处理",
+  login: "登录",
+  login_failed: "登录失败",
+  login_denied: "登录拒绝",
+};
+let refreshInFlight = null;
+let loginPromptTimer = null;
+let noticeTargetOptionsHtml = "";
+let emailTargetCachedHtml = "";
+
+const $ = (selector) => document.querySelector(selector);
+
+function debounce(fn, delay = 300) {
+  let timer = null;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), delay);
+  };
+}
+
+function formatDateTime(value) {
+  if (value === null || value === undefined || value === "") return "";
+  const raw = String(value).trim();
+  if (/T.*(?:Z|(?:\+|-)\d{2}:?\d{2})$/.test(raw)) {
+    const date = new Date(raw);
+    if (!Number.isNaN(date.getTime())) {
+      const parts = Object.fromEntries(new Intl.DateTimeFormat("zh-CN", {
+        timeZone: "Asia/Shanghai",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hourCycle: "h23",
+      }).formatToParts(date).map((p) => [p.type, p.value]));
+      return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+    }
+  }
+  return raw
+    .replace("T", " ")
+    .replace(/(?:\+|-)\d{2}:?\d{2}$/, "")
+    .replace(/\.\d+$/, "")
+    .replace(/Z$/, "")
+    .slice(0, 19);
+}
+
+async function api(path, options = {}) {
+  const { skipLoading, headers = {}, ...rest } = options;
+  if (!skipLoading) {
+    pendingRequests += 1;
+    document.body.classList.add("loading");
+  }
+  try {
+    const res = await fetch(path, {
+      ...rest,
+      headers: { "Content-Type": "application/json", ...headers },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (res.status === 401 && path !== "/api/login") scheduleLoginPrompt();
+      throw new Error(data.detail || `请求失败: ${res.status}`);
+    }
+    if (path !== "/api/login") cancelLoginPrompt();
+    return data;
+  } finally {
+    if (!skipLoading) {
+      pendingRequests -= 1;
+      if (pendingRequests <= 0) document.body.classList.remove("loading");
+    }
+  }
+}
+
+function scheduleLoginPrompt() {
+  clearTimeout(loginPromptTimer);
+  loginPromptTimer = setTimeout(() => {
+    loginPromptTimer = null;
+    showLogin();
+  }, 350);
+}
+
+function cancelLoginPrompt() {
+  if (!loginPromptTimer) return;
+  clearTimeout(loginPromptTimer);
+  loginPromptTimer = null;
+}
+
+function toast(message, type = "success") {
+  const el = $("#toast");
+  const msg = el.querySelector(".toast-msg");
+  msg.textContent = type === "loading" ? message : "处理中...";
+  el.className = "toast-loading";
+  el.style.display = "flex";
+  clearTimeout(window.__toastTimer);
+  clearTimeout(window.__toastStateTimer);
+  if (type === "loading") {
+    window.__toastTimer = setTimeout(() => { el.style.display = "none"; }, 8000);
+    return;
+  }
+  window.__toastStateTimer = setTimeout(() => {
+    el.className = type === "error" ? "toast-error" : "toast-success";
+    msg.textContent = type === "error" ? message : "已完成";
+  }, 450);
+  window.__toastTimer = setTimeout(() => { el.style.display = "none"; }, 2400);
+}
+
+function customConfirm(message, options = {}) {
+  return new Promise((resolve) => {
+    const overlay = $("#modalOverlay");
+    const passwordInput = $("#modalPassword");
+    $("#modalText").textContent = message;
+    passwordInput.value = "";
+    passwordInput.classList.toggle("show", !!options.password);
+    passwordInput.required = !!options.password;
+    overlay.classList.add("show");
+    if (options.password) setTimeout(() => passwordInput.focus(), 80);
+    const cleanup = (result) => {
+      overlay.classList.remove("show");
+      passwordInput.classList.remove("show");
+      passwordInput.required = false;
+      resolve(result);
+    };
+    $("#modalConfirm").onclick = () => {
+      if (options.password) {
+        const code = passwordInput.value.trim();
+        if (!code) {
+          toast("请输入二级验证密码", "error");
+          passwordInput.focus();
+          return;
+        }
+        cleanup(code);
+        return;
+      }
+      cleanup(true);
+    };
+    $("#modalCancel").onclick = () => cleanup(false);
+    overlay.onclick = (e) => { if (e.target === overlay) cleanup(false); };
+    passwordInput.onkeydown = (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        $("#modalConfirm").click();
+      }
+    };
+  });
+}
+
+// ---- Modal Form System ----
+async function loadNoticeTargetOptions() {
+  const res = await api("/api/users?limit=200");
+  const rows = res.items || res;
+  noticeTargetOptionsHtml = rows.map((u) => {
+    const uid = u.uid ?? "";
+    const displayName = u.name || u.nick || "";
+    return `<option value="${escapeHtml(uid)}">${escapeHtml(uid)}（${escapeHtml(displayName || "-")}）</option>`;
+  }).join("");
+}
+
+function noticeTargetSelectHtml() {
+  return `<label>目标 UID<select name="target_uid"><option value="">广播（全部用户）</option>${noticeTargetOptionsHtml}</select></label>`;
+}
+
+async function loadEmailTargetOptions() {
+  const res = await api("/api/users?limit=200");
+  const rows = res.items || res;
+  emailTargetCachedHtml = rows.filter((u) => u.email).map((u) => {
+    const email = u.email || "";
+    const display = u.name || u.nick || email;
+    return `<option value="${escapeHtml(email)}">${escapeHtml(display)}（${escapeHtml(email)}）</option>`;
+  }).join("");
+}
+
+function emailTargetOptionsHtml() {
+  return `<option value="">请选择用户</option>${emailTargetCachedHtml}`;
+}
+
+const formTemplates = {
+  createUser: {
+    title: "创建账号",
+    html: `<label>用户名<input name="name" required></label><label>邮箱<input name="email" type="email" required></label><label>初始密码<input name="password" type="password" minlength="6" required></label>`,
+  },
+  editUser: {
+    title: "编辑账号",
+    html: `<input name="uid" type="hidden"><label>用户名<input name="name" required></label><label>邮箱<input name="email" type="email" required></label><label>昵称<input name="nick"></label><label>性别<input name="sex"></label><label class="wide">头像<input name="icon"></label><label class="wide">签名<input name="desc"></label>`,
+  },
+  resetPassword: {
+    title: "重置密码",
+    html: `<input name="uid" type="hidden"><label class="wide">新密码<input name="password" type="password" minlength="6" required></label>`,
+  },
+  appointRole: {
+    title: "任命角色",
+    html: `<input name="uid" type="hidden"><label class="wide">角色<select name="role" required><option value="1">管理员</option></select></label>`,
+  },
+  createDynamic: {
+    title: "发布动态",
+    html: `<label>UID<input name="uid" type="number" min="1" required></label><label class="wide">内容<textarea name="content" rows="3" maxlength="2000" required></textarea></label>`,
+  },
+  editDynamic: {
+    title: "编辑动态",
+    html: `<input name="id" type="hidden"><label>点赞数<input name="like_count" type="number" min="0" value="0" required></label><label class="wide">内容<textarea name="content" rows="3" maxlength="2000" required></textarea></label>`,
+  },
+  createStar: {
+    title: "新增公告",
+    html: `<label>标题<input name="title" maxlength="60" required></label><label>作者<input name="author" maxlength="50" required readonly style="opacity:0.7;cursor:not-allowed"></label><label class="wide">内容<textarea name="content" rows="4"></textarea><button type="button" class="ai-opt-link" onclick="aiOptimizeStarContent(this)">AI 优化</button></label>`,
+  },
+  editStar: {
+    title: "编辑公告",
+    html: `<input name="original_title" type="hidden"><input name="original_author" type="hidden"><label>标题<input name="title" maxlength="60" required></label><label>作者<input name="author" maxlength="50" required readonly style="opacity:0.7;cursor:not-allowed"></label><label class="wide">内容<textarea name="content" rows="4"></textarea><button type="button" class="ai-opt-link" onclick="aiOptimizeStarContent(this)">AI 优化</button></label>`,
+  },
+  createNotice: {
+    title: "创建通知",
+    html: `__NOTICE_TARGET__<div class="radio-group"><span class="radio-label">等级</span><div class="radio-options"><label class="radio-item"><input type="radio" name="level" value="info" checked><span>INFO</span></label><label class="radio-item"><input type="radio" name="level" value="success"><span>SUCCESS</span></label><label class="radio-item"><input type="radio" name="level" value="warning"><span>WARNING</span></label><label class="radio-item"><input type="radio" name="level" value="error"><span>ERROR</span></label></div></div><label class="wide">标题<input name="title" maxlength="80" required></label><label class="wide">内容<textarea name="content" rows="4" required></textarea></label>`,
+  },
+  editNotice: {
+    title: "编辑通知",
+    html: `<input name="id" type="hidden">__NOTICE_TARGET__<div class="radio-group"><span class="radio-label">等级</span><div class="radio-options"><label class="radio-item"><input type="radio" name="level" value="info" checked><span>INFO</span></label><label class="radio-item"><input type="radio" name="level" value="success"><span>SUCCESS</span></label><label class="radio-item"><input type="radio" name="level" value="warning"><span>WARNING</span></label><label class="radio-item"><input type="radio" name="level" value="error"><span>ERROR</span></label></div></div><div class="radio-group"><span class="radio-label">状态</span><div class="radio-options"><label class="radio-item"><input type="radio" name="delivered" value="0" checked><span>未处理</span></label><label class="radio-item"><input type="radio" name="delivered" value="1"><span>已处理</span></label></div></div><label class="wide">标题<input name="title" maxlength="80" required></label><label class="wide">内容<textarea name="content" rows="4" required></textarea></label>`,
+  },
+  createEmail: {
+    title: "新建邮件通知",
+    html: `<input name="id" type="hidden"><div class="radio-group"><span class="radio-label">发送对象</span><div class="radio-options"><label class="radio-item"><input type="radio" name="target_type" value="all" checked><span>全部用户</span></label><label class="radio-item"><input type="radio" name="target_type" value="single"><span>指定用户</span></label></div></div><label class="wide email-target-single" style="display:none">选择用户<select name="target_email">__EMAIL_TARGET__</select></label><label class="wide">标题<input name="subject" maxlength="120" required></label><label class="wide">内容<textarea name="content" rows="6"></textarea><button type="button" class="ai-opt-link" onclick="aiOptimizeStarContent(this)">AI 优化</button></label>`,
+  },
+};
+function openFormModal(type, data = {}) {
+  const tpl = formTemplates[type];
+  if (!tpl) return;
+  $("#formModalTitle").textContent = tpl.title;
+  const form = $("#modalForm");
+  form.innerHTML = tpl.html.replace("__NOTICE_TARGET__", noticeTargetSelectHtml()).replace("__EMAIL_TARGET__", emailTargetOptionsHtml());
+  form.dataset.formType = type;
+  for (const [k, v] of Object.entries(data)) {
+    const el = form.querySelector(`[name="${k}"]`);
+    if (!el) continue;
+    if (el.type === "radio") {
+      const radio = form.querySelector(`input[name="${k}"][value="${v}"]`);
+      if (radio) radio.checked = true;
+    } else {
+      el.value = v ?? "";
+    }
+  }
+  $("#formModalOverlay").classList.add("show");
+  const firstInput = form.querySelector("input:not([type=hidden]):not([readonly]), textarea, select");
+  if (firstInput) setTimeout(() => firstInput.focus(), 100);
+}
+
+function closeFormModal() {
+  $("#formModalOverlay").classList.remove("show");
+}
+
+function getFormModalJson() {
+  const form = $("#modalForm");
+  const data = Object.fromEntries(new FormData(form).entries());
+  for (const key of Object.keys(data)) {
+    if (data[key] === "") data[key] = null;
+  }
+  if (data.uid) data.uid = Number(data.uid);
+  if (data.id) data.id = Number(data.id);
+  if (data.target_uid) data.target_uid = Number(data.target_uid);
+  if (data.like_count) data.like_count = Number(data.like_count);
+  if (data.role !== undefined && data.role !== null) data.role = Number(data.role);
+  return data;
+}
+
+$("#formModalCancel").addEventListener("click", closeFormModal);
+$("#formModalOverlay").addEventListener("click", (e) => {
+  if (e.target === $("#formModalOverlay")) closeFormModal();
+});
+
+// Enter key to submit modal form
+$("#formModalOverlay").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") {
+    e.preventDefault();
+    $("#formModalSubmit").click();
+  }
+});
+
+$("#formModalSubmit").addEventListener("click", async () => {
+  const form = $("#modalForm");
+  if (!validateForm(form)) return;
+  const type = form.dataset.formType;
+  const data = getFormModalJson();
+  try {
+    switch (type) {
+      case "createUser":
+        await api("/api/users", { method: "POST", body: JSON.stringify(data) });
+        toast("账号已创建");
+        break;
+      case "editUser": {
+        const uid = data.uid; delete data.uid;
+        await api(`/api/users/${uid}`, { method: "PATCH", body: JSON.stringify(data) });
+        toast("账号已保存");
+        break;
+      }
+      case "resetPassword":
+        await api(`/api/users/${data.uid}/password`, { method: "PATCH", body: JSON.stringify({ password: data.password }) });
+        toast("密码已重置");
+        break;
+      case "appointRole":
+        await api(`/api/users/${data.uid}/role`, { method: "PATCH", body: JSON.stringify({ role: data.role }) });
+        toast("角色已更新");
+        break;
+      case "createDynamic":
+        await api("/api/dynamics", { method: "POST", body: JSON.stringify(data) });
+        toast("动态已发布");
+        break;
+      case "editDynamic": {
+        const id = data.id; delete data.id;
+        await api(`/api/dynamics/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+        toast("动态已更新");
+        break;
+      }
+      case "createStar":
+        await api("/api/star-notices", { method: "POST", body: JSON.stringify(data) });
+        toast("公告已发布");
+        break;
+      case "editStar": {
+        const t = encodeURIComponent(data.original_title);
+        const a = encodeURIComponent(data.original_author);
+        delete data.original_title; delete data.original_author;
+        await api(`/api/star-notices?title=${t}&author=${a}`, { method: "PATCH", body: JSON.stringify(data) });
+        toast("公告已更新");
+        break;
+      }
+      case "createNotice":
+        await api("/api/admin-notices", { method: "POST", body: JSON.stringify(data) });
+        toast("通知已创建");
+        break;
+      case "editNotice": {
+        const nid = data.id; delete data.id;
+        data.delivered = Number(data.delivered || 0);
+        await api(`/api/admin-notices/${nid}`, { method: "PATCH", body: JSON.stringify(data) });
+        toast("通知已更新");
+        break;
+      }
+      case "createEmail":
+        await api("/api/email-draft/save", { method: "POST", body: JSON.stringify(data) });
+        toast(data.id ? "已更新" : "已保存");
+        break;
+    }
+    closeFormModal();
+    await refreshCurrent();
+  } catch (err) { toast(err.message, "error"); }
+});
+// ---- Create buttons ----
+$("#createUserBtn")?.addEventListener("click", () => openFormModal("createUser"));
+$("#createDynamicBtn")?.addEventListener("click", () => openFormModal("createDynamic"));
+$("#createStarBtn")?.addEventListener("click", () => {
+  const author = localStorage.getItem("mhkh_user_name") || "";
+  openFormModal("createStar", { author });
+});
+$("#createNoticeBtn")?.addEventListener("click", async () => {
+  try {
+    await loadNoticeTargetOptions();
+    openFormModal("createNotice");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+});
+
+async function aiOptimizeStarContent(btn) {
+  const form = $("#modalForm");
+  const textarea = form.querySelector('textarea[name="content"]');
+  if (!textarea) return;
+  const text = textarea.value.trim();
+  if (!text) { toast("请先输入内容", "error"); return; }
+  btn.disabled = true;
+  btn.textContent = "优化中...";
+  try {
+    const data = await api("/api/ai/optimize-text", { method: "POST", body: JSON.stringify({ text }) });
+    if (data.result) {
+      textarea.value = data.result;
+      toast("内容已优化");
+    }
+  } catch (err) {
+    toast(err.message || "优化失败", "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "AI 优化";
+  }
+}
+
+function validateForm(form) {
+  for (const el of form.querySelectorAll("[required]")) {
+    if (!el.value.trim()) {
+      const label = el.closest("label")?.textContent?.trim() || el.name || "字段";
+      toast(`${label} 不能为空`, "error");
+      el.focus();
+      return false;
+    }
+    if (el.minLength > 0 && el.value.length < el.minLength) {
+      toast(`最少输入 ${el.minLength} 个字符`, "error");
+      el.focus();
+      return false;
+    }
+    if (el.type === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(el.value)) {
+      toast("请输入正确的邮箱格式", "error");
+      el.focus();
+      return false;
+    }
+  }
+  return true;
+}
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function formatAction(action) {
+  return actionLabels[action] || action || "-";
+}
+
+function renderPager(containerId, viewKey, rows, total) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  const p = pageState[viewKey] || 1;
+  const perPage = pageSizeState[viewKey] || PAGE_SIZE;
+  const totalPages = total > 0 ? Math.ceil(total / perPage) : (rows.length >= perPage ? p + 1 : p);
+  const hasMore = p < totalPages;
+
+  // 页码按钮：最多显示 7 个页码
+  let pageBtns = "";
+  if (totalPages > 1) {
+    let start = Math.max(1, p - 3);
+    let end = Math.min(totalPages, start + 6);
+    if (end - start < 6) start = Math.max(1, end - 6);
+    if (start > 1) pageBtns += `<button data-page="1" data-pager="${viewKey}">1</button>`;
+    if (start > 2) pageBtns += `<span class="pager-ellipsis">...</span>`;
+    for (let i = start; i <= end; i++) {
+      pageBtns += `<button data-page="${i}" data-pager="${viewKey}"${i === p ? ' class="active"' : ''}>${i}</button>`;
+    }
+    if (end < totalPages - 1) pageBtns += `<span class="pager-ellipsis">...</span>`;
+    if (end < totalPages) pageBtns += `<button data-page="${totalPages}" data-pager="${viewKey}">${totalPages}</button>`;
+  }
+
+  el.innerHTML =
+    `<span class="pager-total">共 ${total ?? rows.length} 条</span>` +
+    (p > 1 ? `<button data-page="${p - 1}" data-pager="${viewKey}">&laquo;</button>` : "") +
+    pageBtns +
+    (hasMore ? `<button data-page="${p + 1}" data-pager="${viewKey}">&raquo;</button>` : "") +
+    `<span class="pager-sep"></span>` +
+    `<span class="pager-size-group">` +
+    [20, 50, 100].map(n => `<button class="pager-size-btn${n === perPage ? " active" : ""}" data-pager-size="${viewKey}" data-size="${n}">${n}</button>`).join("") +
+    `</span>`;
+}
+const sortState = {};
+
+function renderTable(table, columns, rows, options = {}) {
+  const { selectable = false, viewKey = "" } = options;
+
+  // Apply sort if active
+  const sort = sortState[viewKey];
+  if (sort && sort.key && sort.dir) {
+    const col = columns.find((c) => c.key === sort.key);
+    if (col) {
+      rows = [...rows].sort((a, b) => {
+        let va = a[sort.key] ?? "";
+        let vb = b[sort.key] ?? "";
+        if (typeof va === "number" && typeof vb === "number") return sort.dir === "asc" ? va - vb : vb - va;
+        va = String(va); vb = String(vb);
+        return sort.dir === "asc" ? va.localeCompare(vb) : vb.localeCompare(va);
+      });
+    }
+  }
+
+  const checkboxCol = selectable ? '<th style="width:40px"><input type="checkbox" class="table-checkbox" data-select-all></th>' : "";
+  const head = `<thead><tr>${checkboxCol}${columns.map((c) => {
+    const className = c.className || "";
+    const width = c.width ? ` style="width:${c.width}"` : "";
+    if (c.sortable && c.key) {
+      const s = sortState[viewKey];
+      const sortCls = s && s.key === c.key && s.dir ? `sortable sort-${s.dir}` : "sortable";
+      const cls = [className, sortCls].filter(Boolean).join(" ");
+      return `<th class="${cls}"${width} data-sort-key="${c.key}" data-sort-view="${viewKey}">${c.label}</th>`;
+    }
+    return `<th${className ? ` class="${className}"` : ""}${width}>${c.label}</th>`;
+  }).join("")}</tr></thead>`;
+  const body = rows.length
+    ? rows.map((row) => {
+        const cb = selectable ? `<td><input type="checkbox" class="table-checkbox" data-select-id="${row.uid || row.id}"></td>` : "";
+        return `<tr>${cb}${columns.map((c) => {
+          const value = c.key === "create_time" ? formatDateTime(row[c.key]) : row[c.key];
+          return `<td${c.className ? ` class="${c.className}"` : ""}>${c.render ? c.render(row) : escapeHtml(value)}</td>`;
+        }).join("")}</tr>`;
+      }).join("")
+    : `<tr><td colspan="${columns.length + (selectable ? 1 : 0)}"><div class="empty-state">暂无数据</div></td></tr>`;
+  table.innerHTML = `${head}<tbody>${body}</tbody>`;
+
+  // Bind sort click
+  table.querySelectorAll("th[data-sort-key]").forEach((th) => {
+    th.addEventListener("click", () => {
+      const key = th.dataset.sortKey;
+      const view = th.dataset.sortView;
+      const cur = sortState[view];
+      if (cur && cur.key === key) {
+        sortState[view] = cur.dir === "asc" ? { key, dir: "desc" } : cur.dir === "desc" ? { key: null, dir: null } : { key, dir: "asc" };
+      } else {
+        sortState[view] = { key, dir: "asc" };
+      }
+      refreshCurrent().catch((err) => toast(err.message, "error"));
+    });
+  });
+}
+
+function renderMiniList(selector, rows, emptyText, renderRow) {
+  const el = $(selector);
+  if (!el) return;
+  if (!rows || rows.length === 0) {
+    el.innerHTML = `<div class="empty-state">${emptyText}</div>`;
+    return;
+  }
+  el.innerHTML = rows.map(renderRow).join("");
+}
+
+async function loadSummary() {
+  const data = await api("/api/summary");
+  $("#mUsers").textContent = data.users;
+  $("#mDynamics").textContent = data.dynamics;
+  $("#mOnlineUsers").textContent = data.online_users ?? 0;
+  $("#mNotices").textContent = data.notices;
+  $("#mTotalOps").textContent = data.total_operations ?? 0;
+  $("#mTodayOps").textContent = data.today_operations ?? 0;
+  $("#mTodayUsers").textContent = data.today_users ?? 0;
+  $("#mTodayDynamics").textContent = data.today_dynamics ?? 0;
+  $("#mPendingDynamics").textContent = data.pending_dynamics ?? 0;
+  $("#mTodayAIChats").textContent = data.today_ai_chats ?? 0;
+  $("#mPendingAdminApplies").textContent = data.pending_admin_applies ?? 0;
+  renderMiniList("#recentLoginList", data.recent_logins, "暂无登录记录", (r) => `
+    <div class="mini-item">
+      <strong>${escapeHtml(r.user || "-")}</strong>
+      <span>${escapeHtml(r.ip || "")}</span>
+      <time>${escapeHtml(formatDateTime(r.create_time))}</time>
+    </div>
+  `);
+  renderMiniList("#recentErrorList", data.recent_errors, "暂无异常操作", (r) => `
+    <div class="mini-item danger-text">
+      <strong>${escapeHtml(formatAction(r.action))}</strong>
+      <span>${escapeHtml(r.summary || "")}</span>
+      <time>${escapeHtml(formatDateTime(r.create_time))}</time>
+    </div>
+  `);
+}
+
+async function loadLogOperators() {
+  const sel = $("#logOperatorFilter");
+  if (!sel) return;
+  try {
+    const rows = await api("/api/log-operators", { skipLoading: true });
+    const current = sel.value;
+    const opts = ['<option value="">操作人</option>'];
+    for (const r of rows || []) {
+      const name = String(r.operator || "");
+      if (!name) continue;
+      opts.push(`<option value="${escapeHtml(name)}">${escapeHtml(name)} (${r.cnt})</option>`);
+    }
+    sel.innerHTML = opts.join("");
+    if (current) sel.value = current;
+  } catch (err) { /* ignore */ }
+}
+
+async function loadLogs() {
+  const q = encodeURIComponent($("#logSearch")?.value?.trim() || "");
+  const module = $("#logModuleFilter")?.value || "";
+  const action = $("#logActionFilter")?.value || "";
+  const operator = $("#logOperatorFilter")?.value || "";
+  const startDate = $("#logStartDate")?.value || "";
+  const endDate = $("#logEndDate")?.value || "";
+  const perPage = pageSizeState.logs || PAGE_SIZE;
+  let url = `/api/logs?page=${pageState.logs}&limit=${perPage}`;
+  if (q) url += `&q=${q}`;
+  if (module) url += `&module=${module}`;
+  if (action) url += `&action=${action}`;
+  if (operator) url += `&operator=${encodeURIComponent(operator)}`;
+  if (startDate) url += `&start_date=${startDate}`;
+  if (endDate) url += `&end_date=${endDate}`;
+  const data = await api(url);
+  const rows = data.items || data;
+  const total = data.total ?? rows.length;
+  renderTable($("#logTable"), [
+    { key: "id", label: "ID", sortable: true },
+    { key: "module", label: "模块", sortable: true },
+    { key: "action", label: "操作", sortable: true, render: (r) => formatAction(r.action) },
+    { key: "summary", label: "说明" },
+    { key: "user", label: "操作人", sortable: true },
+    { key: "create_time", label: "时间", sortable: true },
+  ], rows, { viewKey: "logs" });
+  renderPager("logPager", "logs", rows, total);
+}
+function renderAnalytics(data) {
+  renderDynamicLineChart(data.dynamic_trend || []);
+
+  const stats = Object.fromEntries((data.apply_stats || []).map((r) => [Number(r.status), Number(r.count)]));
+  const total = Object.values(stats).reduce((a, b) => a + b, 0);
+  const accepted = stats[1] || 0;
+  const pending = stats[0] || 0;
+  const rejected = stats[2] || 0;
+  const noticeTotal = Number(data.notice_stats?.total || 0);
+  const delivered = Number(data.notice_stats?.delivered || 0);
+  const applyRate = total ? Math.round(accepted / total * 100) : 0;
+  const noticeRate = noticeTotal ? Math.round(delivered / noticeTotal * 100) : 0;
+
+  $("#mApplyRate").textContent = `${applyRate}%`;
+
+  const rows = [
+    ["待处理", pending, total],
+    ["已通过", accepted, total],
+    ["已拒绝", rejected, total],
+    ["通知已送达", delivered, noticeTotal],
+  ];
+  $("#applyStats").innerHTML = rows.map(([label, count, base]) => {
+    const pct = base ? Math.round(count / base * 100) : 0;
+    return `<div class="stat-row">
+      <div class="stat-label"><span>${label}</span><span>${count} / ${base || 0}</span></div>
+      <div class="stat-track"><div class="stat-fill" style="width:${pct}%"></div></div>
+    </div>`;
+  }).join("");
+}
+function lastNDays(n) {
+  const days = [];
+  const today = new Date();
+  for (let i = n - 1; i >= 0; --i) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    const key = d.toISOString().slice(0, 10);
+    days.push(key);
+  }
+  return days;
+}
+
+function cssVar(name) {
+  return getComputedStyle(document.body).getPropertyValue(name).trim();
+}
+
+function renderDynamicLineChart(rows) {
+  const canvas = $("#dynamicTrend");
+  const ctx = canvas.getContext("2d");
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+  canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const width = rect.width;
+  const height = rect.height;
+  const padding = { left: 42, right: 18, top: 22, bottom: 38 };
+  const text = cssVar("--text") || "#1f2937";
+  const muted = cssVar("--muted") || "#667085";
+  const line = cssVar("--line") || "#dfe3ea";
+  const primary = cssVar("--primary") || "#2563eb";
+
+  ctx.clearRect(0, 0, width, height);
+  const map = Object.fromEntries(rows.map((r) => [String(r.day).slice(0, 10), Number(r.count || 0)]));
+  const days = lastNDays(14);
+  const values = days.map((d) => map[d] || 0);
+  const maxValue = Math.max(1, ...values);
+  const plotW = width - padding.left - padding.right;
+  const plotH = height - padding.top - padding.bottom;
+  const x = (i) => padding.left + (plotW * i) / Math.max(1, days.length - 1);
+  const y = (v) => padding.top + plotH - (plotH * v) / maxValue;
+
+  ctx.font = "12px Microsoft YaHei, Segoe UI, Arial";
+  ctx.strokeStyle = line;
+  ctx.fillStyle = muted;
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const value = Math.round((maxValue * i) / 4);
+    const yy = y(value);
+    ctx.beginPath();
+    ctx.moveTo(padding.left, yy);
+    ctx.lineTo(width - padding.right, yy);
+    ctx.stroke();
+    ctx.fillText(String(value), 10, yy + 4);
+  }
+
+  ctx.fillStyle = muted;
+  days.forEach((day, i) => {
+    if (i % 2 === 0 || i === days.length - 1) {
+      ctx.fillText(day.slice(5), x(i) - 15, height - 12);
+    }
+  });
+
+  ctx.strokeStyle = primary;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  values.forEach((value, i) => {
+    const px = x(i);
+    const py = y(value);
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  });
+  ctx.stroke();
+
+  values.forEach((value, i) => {
+    const px = x(i);
+    const py = y(value);
+    ctx.beginPath();
+    ctx.fillStyle = primary;
+    ctx.arc(px, py, 4, 0, Math.PI * 2);
+    ctx.fill();
+    if (value > 0) {
+      ctx.fillStyle = text;
+      ctx.fillText(String(value), px - 4, py - 10);
+    }
+  });
+}
+
+async function loadAnalytics() {
+  const data = await api("/api/analytics");
+  lastAnalyticsData = data;
+  renderAnalytics(data);
+}
+
+function renderServiceState(item) {
+  const online = !!item.online;
+  return `<span class="online-pill ${online ? "is-online" : "is-offline"}"><span class="online-dot"></span>${online ? "在线" : "异常"}</span>`;
+}
+
+function renderServiceCard(item) {
+  const online = !!item.online;
+  const latency = item.latency_ms ?? 0;
+  const users = item.online_users ?? 0;
+  return `
+    <div class="monitor-card ${online ? "is-online" : "is-offline"}">
+      <div class="monitor-card-head">
+        <strong>${escapeHtml(item.name || "-")}</strong>
+        ${renderServiceState(item)}
+      </div>
+      <p>${escapeHtml(item.kind || "")}</p>
+      <div class="monitor-card-meta">
+        <span>${escapeHtml(item.addr || "-")}</span>
+        <span>${latency} ms</span>
+        ${String(item.name || "").startsWith("ChatServer") ? `<span>${users} 人在线</span>` : ""}
+      </div>
+      ${item.error ? `<div class="monitor-error">${escapeHtml(item.error)}</div>` : ""}
+    </div>
+  `;
+}
+
+async function loadServiceStatus() {
+  const data = await api("/api/service-status");
+  const services = data.services || [];
+  const depends = data.depends || [];
+  const onlineServices = services.filter((s) => s.online).length;
+  const onlineDepends = depends.filter((s) => s.online).length;
+  $("#mServiceOnline").textContent = `${onlineServices}/${services.length}`;
+  $("#mServiceOffline").textContent = services.length - onlineServices;
+  $("#mMonitorOnlineUsers").textContent = data.total_online ?? 0;
+  $("#mDependOnline").textContent = `${onlineDepends}/${depends.length}`;
+  $("#mDependOffline").textContent = depends.length - onlineDepends;
+  $("#mMonitorRefresh").textContent = new Date().toLocaleTimeString("zh-CN");
+  $("#serviceCards").innerHTML = [...services, ...depends].map(renderServiceCard).join("");
+
+  const columns = [
+    { key: "name", label: "名称", sortable: true },
+    { key: "kind", label: "类型" },
+    { key: "addr", label: "地址" },
+    { key: "online", label: "状态", render: renderServiceState },
+    { key: "latency_ms", label: "延迟(ms)", sortable: true },
+    { key: "online_users", label: "在线人数", sortable: true, render: (r) => r.online_users ?? "-" },
+    { key: "error", label: "异常信息", render: (r) => r.error ? `<span class="danger-text">${escapeHtml(r.error)}</span>` : "-" },
+  ];
+  renderTable($("#serviceStatusTable"), columns, services, { viewKey: "monitor_services" });
+  renderTable($("#dependStatusTable"), columns.filter((c) => c.key !== "online_users"), depends, { viewKey: "monitor_depends" });
+}
+
+async function loadMonitorConfig() {
+  const data = await api("/api/monitor/config");
+  const o = data.overrides || {};
+  const d = data.defaults || {};
+  $("#mcMySQL").placeholder = d.mysql || "127.0.0.1:3306";
+  $("#mcRedis").placeholder = d.redis || "127.0.0.1:6379";
+  $("#mcGateServer").placeholder = d.gate_server || "127.0.0.1:8080";
+  $("#mcStatusServer").placeholder = d.status_server || "127.0.0.1:50052";
+  $("#mcVerifyServer").placeholder = d.verify_server || "127.0.0.1:50051";
+  $("#mcChatServer1").placeholder = d.chat_server1 || "127.0.0.1:8090";
+  $("#mcChatServer2").placeholder = d.chat_server2 || "127.0.0.1:8091";
+  $("#mcMySQL").value = o.mysql || "";
+  $("#mcRedis").value = o.redis || "";
+  $("#mcGateServer").value = o.gate_server || "";
+  $("#mcStatusServer").value = o.status_server || "";
+  $("#mcVerifyServer").value = o.verify_server || "";
+  $("#mcChatServer1").value = o.chat_server1 || "";
+  $("#mcChatServer2").value = o.chat_server2 || "";
+}
+
+async function saveMonitorConfig() {
+  const body = {
+    mysql: $("#mcMySQL").value.trim(),
+    redis: $("#mcRedis").value.trim(),
+    gate_server: $("#mcGateServer").value.trim(),
+    status_server: $("#mcStatusServer").value.trim(),
+    verify_server: $("#mcVerifyServer").value.trim(),
+    chat_server1: $("#mcChatServer1").value.trim(),
+    chat_server2: $("#mcChatServer2").value.trim(),
+  };
+  await api("/api/monitor/config/update", { method: "POST", body: JSON.stringify(body) });
+  toast("监控地址已保存");
+  await loadServiceStatus();
+}
+
+async function resetMonitorConfig() {
+  const body = { mysql: "", redis: "", gate_server: "", status_server: "", verify_server: "", chat_server1: "", chat_server2: "" };
+  await api("/api/monitor/config/update", { method: "POST", body: JSON.stringify(body) });
+  toast("已重置为默认地址");
+  await loadMonitorConfig();
+  await loadServiceStatus();
+}
+
+async function loadMaintenance() {
+  const data = await api("/api/maintenance/summary");
+  const counts = data.counts || {};
+  $("#bkUsers").textContent = counts.users ?? 0;
+  $("#bkDynamics").textContent = counts.dynamics ?? 0;
+  $("#bkLogs").textContent = counts.logs ?? 0;
+  $("#bkFriends").textContent = counts.friends ?? 0;
+  $("#bkApplies").textContent = counts.friend_applies ?? 0;
+  $("#bkNotices").textContent = counts.admin_notices ?? 0;
+  $("#bkAdminApps").textContent = counts.admin_applications ?? 0;
+  $("#bkEmailDrafts").textContent = counts.email_drafts ?? 0;
+
+  const db = data.database || {};
+  renderTable($("#maintenanceDbTable"), [
+    { key: "label", label: "配置项" },
+    { key: "value", label: "当前值" },
+  ], [
+    { label: "数据库类型", value: db.driver || "mysql" },
+    { label: "连接地址", value: `${db.host || "-"}:${db.port || "-"}` },
+    { label: "数据库名", value: db.name || "-" },
+    { label: "连接用户", value: db.user || "-" },
+    { label: "检查时间", value: data.checked_at || "-" },
+  ], { viewKey: "maintenance_db" });
+
+  renderTable($("#maintenanceCountTable"), [
+    { key: "name", label: "数据表" },
+    { key: "count", label: "当前数量", sortable: true },
+  ], [
+    { name: "用户 user", count: counts.users ?? 0 },
+    { name: "动态 dynamic", count: counts.dynamics ?? 0 },
+    { name: "操作日志 admin_operation_log", count: counts.logs ?? 0 },
+    { name: "好友关系 friend", count: counts.friends ?? 0 },
+    { name: "好友申请 friend_apply", count: counts.friend_applies ?? 0 },
+    { name: "后台通知 admin_notice", count: counts.admin_notices ?? 0 },
+    { name: "公告 StarNotice", count: counts.star_notices ?? 0 },
+    { name: "AI 会话 ai_chat_message", count: counts.ai_messages ?? 0 },
+    { name: "管理员申请 admin_application", count: counts.admin_applications ?? 0 },
+    { name: "邮件草稿 email_draft", count: counts.email_drafts ?? 0 },
+  ], { viewKey: "maintenance_counts" });
+}
+
+async function loadUsers() {
+  const q = encodeURIComponent(($("#userSearch")?.value || "").trim());
+  const perPage = pageSizeState.users || PAGE_SIZE;
+  const data = await api(`/api/users?q=${q}&page=${pageState.users}&limit=${perPage}`);
+  const rows = data.items || data;
+  const total = data.total ?? rows.length;
+  renderTable($("#usersTable"), [
+    { key: "uid", label: "UID", sortable: true },
+    { key: "name", label: "用户名", sortable: true },
+    { key: "email", label: "邮箱", sortable: true },
+    { key: "nick", label: "昵称" },
+    { key: "sex", label: "性别" },
+    { key: "icon", label: "头像" },
+    { key: "role", label: "角色", sortable: true, render: (r) => `<span class="role-pill role-${Number(r.role || 0)}">${roleLabels[Number(r.role || 0)] || "普通用户"}</span>` },
+    { key: "desc", label: "签名" },
+    { key: "status", label: "在线状态", sortable: true, render: renderOnlineStatus },
+    {
+      label: "操作",
+      className: "action-cell user-actions-cell",
+      width: "360px",
+      render: (r) => {
+        const role = Number(r.role || 0);
+        const selfRole = Number(localStorage.getItem("mhkh_user_role") || 0);
+        const selfUid = localStorage.getItem("mhkh_user_uid");
+        const selfName = localStorage.getItem("mhkh_user_name");
+        const isSelf = (selfUid && String(r.uid) === selfUid) || (selfName && r.name === selfName);
+        const canEdit = isSelf || role < selfRole;
+        const canReset = role < selfRole || isSelf;
+        const canDelete = !isSelf && role < selfRole;
+        const canManageRole = selfRole === 2 && !isSelf && role !== 2;
+        const roleBtn = !canManageRole
+          ? ""
+          : role === 1
+            ? `<button class="role-cancel-btn" data-unrole-user="${r.uid}">取消任命</button>`
+            : `<button class="role-appoint-btn" data-role-user="${r.uid}" data-current-role="${role}">任命管理员</button>`;
+        return `
+          <div class="table-actions">
+            ${canEdit ? `<button data-edit-user="${r.uid}">编辑</button>` : ""}
+            ${roleBtn}
+            ${canReset ? `<button class="warn" data-reset-user="${r.uid}">重置密码</button>` : ""}
+            ${canDelete ? `<button class="danger" data-delete-user="${r.uid}">删除</button>` : ""}
+          </div>
+        `;
+      },
+    },
+  ], rows, { selectable: true, viewKey: "users" });
+  renderPager("usersPager", "users", rows, total);
+  updateBatchBar();
+}
+
+async function loadDynamics() {
+  const q = encodeURIComponent(($("#dynamicSearch")?.value || "").trim());
+  const status = $("#dynamicStatusFilter")?.value || "";
+  const statusParam = status !== "" ? `&status=${status}` : "";
+  const perPage = pageSizeState.dynamics || PAGE_SIZE;
+  const data = await api(`/api/dynamics?q=${q}${statusParam}&page=${pageState.dynamics}&limit=${perPage}`);
+  const rows = data.items || data;
+  const total = data.total ?? rows.length;
+  const statusText = { 0: "正常", 1: "审核中", 2: "违规隐藏" };
+  const statusColor = { 0: "var(--ok)", 1: "#f59e0b", 2: "var(--danger)" };
+  renderTable($("#dynamicTable"), [
+    { key: "id", label: "ID", sortable: true },
+    { key: "uid", label: "UID", sortable: true },
+    { key: "name", label: "用户" },
+    { key: "content", label: "内容", render: (r) => `<div class="content">${escapeHtml(r.content)}</div>` },
+    { key: "like_count", label: "点赞", sortable: true },
+    { label: "状态", render: (r) => `<span style="color:${statusColor[r.status] || "var(--muted)"}">${statusText[r.status] || "未知"}</span>` },
+    { key: "create_time", label: "时间", sortable: true },
+    { label: "操作", className: "action-cell dynamic-actions-cell", width: "270px", render: (r) => {
+      const auditBtn = r.status !== 1 ? `<button class="audit-btn" data-audit-dynamic="${r.id}">审核</button>` : "";
+      const passBtn = r.status === 1 ? `<button class="pass-btn" data-pass-dynamic="${r.id}">通过</button>` : "";
+      const hideBtn = r.status !== 2 ? `<button class="warn" data-hide-dynamic="${r.id}">隐藏</button>` : "";
+      const restoreBtn = r.status === 2 ? `<button class="ok" data-restore-dynamic="${r.id}">恢复</button>` : "";
+      return `<div class="table-actions"><button class="edit-btn" data-edit-dynamic="${r.id}">编辑</button>${auditBtn}${passBtn}${hideBtn}${restoreBtn}<button class="danger" data-delete-dynamic="${r.id}">删除</button></div>`;
+    }},
+  ], rows, { viewKey: "dynamics" });
+  renderPager("dynamicPager", "dynamics", rows, total);
+}
+
+async function loadApplies() {
+  const perPage = pageSizeState.applies || PAGE_SIZE;
+  const data = await api(`/api/friend-applies?page=${pageState.applies}&limit=${perPage}`);
+  const rows = data.items || data;
+  const total = data.total ?? rows.length;
+  const statusText = { 0: "待处理", 1: "同意", 2: "拒绝" };
+  renderTable($("#applyTable"), [
+    { key: "id", label: "ID", sortable: true },
+    { label: "申请人", render: (r) => `${escapeHtml(r.from_name)} (${r.from_uid})` },
+    { label: "接收人", render: (r) => `${escapeHtml(r.to_name)} (${r.to_uid})` },
+    { key: "status", label: "状态", sortable: true, render: (r) => statusText[r.status] || r.status },
+    { key: "descs", label: "备注" },
+    { label: "操作", className: "compact-actions-cell apply-actions-cell", width: "230px", render: (r) => `<div class="table-actions"><button class="ok" data-apply="${r.id}" data-status="1">同意</button><button class="danger" data-apply="${r.id}" data-status="2">拒绝</button>${r.status !== 0 ? `<button data-apply="${r.id}" data-status="0">取消处理</button>` : ""}</div>` },
+  ], rows, { viewKey: "applies" });
+  renderPager("applyPager", "applies", rows, total);
+}
+
+async function loadFriends() {
+  const q = encodeURIComponent(($("#friendSearch")?.value || "").trim());
+  const perPage = pageSizeState.friends || PAGE_SIZE;
+  const data = await api(`/api/friends?q=${q}&page=${pageState.friends}&limit=${perPage}`);
+  const rows = data.items || data;
+  const total = data.total ?? rows.length;
+  renderTable($("#friendTable"), [
+    { key: "self_id", label: "用户 UID", sortable: true },
+    { label: "用户", render: (r) => `${escapeHtml(r.self_name || "")}${r.self_nick ? ` / ${escapeHtml(r.self_nick)}` : ""}` },
+    { key: "friend_id", label: "好友 UID", sortable: true },
+    { label: "好友", render: (r) => `${escapeHtml(r.friend_name || "")}${r.friend_nick ? ` / ${escapeHtml(r.friend_nick)}` : ""}` },
+    { key: "back", label: "备注" },
+    { label: "操作", className: "compact-actions-cell friend-actions-cell", width: "150px", render: (r) => `<div class="table-actions"><button class="danger" data-delete-friend="${r.self_id}" data-friend-id="${r.friend_id}">删除关系</button></div>` },
+  ], rows, { viewKey: "friends" });
+  renderPager("friendPager", "friends", rows, total);
+}
+
+async function loadStarNotices() {
+  const q = encodeURIComponent(($("#starSearch")?.value || "").trim());
+  const perPage = pageSizeState.star || PAGE_SIZE;
+  const data = await api(`/api/star-notices?q=${q}&page=${pageState.star}&limit=${perPage}`);
+  const rows = data.items || data;
+  const total = data.total ?? rows.length;
+  renderTable($("#starTable"), [
+    { key: "title", label: "标题", sortable: true },
+    { key: "author", label: "作者", sortable: true },
+    { key: "content", label: "内容", render: (r) => `<div class="content">${escapeHtml(r.content)}</div>` },
+    { label: "操作", className: "compact-actions-cell", width: "150px", render: (r) => `<div class="table-actions"><button data-edit-star="${escapeHtml(r.title)}" data-star-author="${escapeHtml(r.author)}">编辑</button><button class="danger" data-star-title="${escapeHtml(r.title)}" data-star-author="${escapeHtml(r.author)}">删除</button></div>` },
+  ], rows, { viewKey: "star" });
+  renderPager("starPager", "star", rows, total);
+}
+
+async function loadAdminNotices() {
+  const q = encodeURIComponent(($("#noticeSearch")?.value || "").trim());
+  const perPage = pageSizeState.notices || PAGE_SIZE;
+  const data = await api(`/api/admin-notices?q=${q}&page=${pageState.notices}&limit=${perPage}`);
+  const rows = data.items || data;
+  const total = data.total ?? rows.length;
+  renderTable($("#noticeTable"), [
+    { key: "id", label: "ID", sortable: true },
+    { label: "目标", render: (r) => r.target_uid ? r.target_uid : "广播" },
+    { key: "level", label: "等级", sortable: true, render: (r) => r.level.toUpperCase() },
+    { key: "title", label: "标题", sortable: true },
+    { key: "content", label: "内容", render: (r) => `<div class="content">${escapeHtml(r.content)}</div>` },
+    { label: "状态", render: (r) => r.delivered ? "已处理" : "未处理" },
+    { key: "create_time", label: "时间", sortable: true },
+    { label: "操作", className: "compact-actions-cell", width: "150px", render: (r) => `<div class="table-actions"><button data-edit-notice="${r.id}">编辑</button><button class="danger" data-delete-notice="${r.id}">删除</button></div>` },
+  ], rows, { viewKey: "notices" });
+  renderPager("noticePager", "notices", rows, total);
+}
+async function refreshCurrent() {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = doRefreshCurrent().finally(() => {
+    refreshInFlight = null;
+  });
+  return refreshInFlight;
+}
+
+async function doRefreshCurrent() {
+  if (currentView === "dashboard") {
+    await loadSummary();
+    await loadLogs();
+    await loadAnalytics();
+    loadLogOperators().catch(() => {});
+  }
+  if (currentView === "monitor") {
+    await loadServiceStatus();
+    if ($("#monitorConfigPanel").style.display !== "none") loadMonitorConfig().catch(() => {});
+  }
+  if (currentView === "maintenance") await loadMaintenance();
+  if (currentView === "users") await loadUsers();
+  if (currentView === "dynamics") await loadDynamics();
+  if (currentView === "friends") await loadFriends();
+  if (currentView === "applies") await loadApplies();
+  if (currentView === "star") await loadStarNotices();
+  if (currentView === "notices") await loadAdminNotices();
+  if (currentView === "admin-apply") await loadAdminApplies();
+  if (currentView === "email-notify") await loadEmailDrafts();
+  if (currentView === "ai") await loadAISessions();
+}
+
+function activateView(view) {
+  if (!titles[view]) view = "dashboard";
+  currentView = view;
+  localStorage.setItem("mhkh_admin_view", view);
+  document.querySelectorAll(".nav").forEach((n) => n.classList.toggle("active", n.dataset.view === view));
+  document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === view));
+  $("#view-title").textContent = titles[view][0];
+  $("#view-subtitle").textContent = titles[view][1];
+  if (view === "dashboard") startAutoRefresh();
+  else { stopAutoRefresh(); updateTimerDisplay(); }
+}
+
+function setTheme(mode) {
+  document.body.classList.toggle("dark", mode === "dark");
+  localStorage.setItem("mhkh_admin_theme", mode);
+  const themeIcon = $("#themeBtn i");
+  if (themeIcon) { themeIcon.className = mode === "dark" ? "fa fa-sun-o" : "fa fa-moon-o"; }
+  if (lastAnalyticsData && currentView === "dashboard") renderAnalytics(lastAnalyticsData);
+}
+
+document.querySelectorAll(".nav").forEach((btn) => {
+  btn.addEventListener("click", async () => {
+    activateView(btn.dataset.view);
+    if (currentView === "dashboard") startAutoRefresh();
+    else stopAutoRefresh();
+    try { await refreshCurrent(); } catch (err) { toast(err.message, "error"); }
+  });
+});
+
+$("#refreshBtn").addEventListener("click", () => {
+  resetAutoRefresh();
+  const el = $("#lastRefreshTime");
+  if (el) el.textContent = `更新于 ${new Date().toLocaleTimeString("zh-CN")}`;
+  refreshCurrent().catch((err) => toast(err.message, "error"));
+});
+
+$("#monitorRefreshBtn")?.addEventListener("click", () => {
+  loadServiceStatus().catch((err) => toast(err.message, "error"));
+});
+
+$("#monitorConfigToggle")?.addEventListener("click", () => {
+  const panel = $("#monitorConfigPanel");
+  const visible = panel.style.display !== "none";
+  panel.style.display = visible ? "none" : "block";
+  if (!visible) loadMonitorConfig().catch((err) => toast(err.message, "error"));
+});
+
+$("#monitorConfigSave")?.addEventListener("click", () => {
+  saveMonitorConfig().catch((err) => toast(err.message, "error"));
+});
+
+$("#monitorConfigReset")?.addEventListener("click", () => {
+  resetMonitorConfig().catch((err) => toast(err.message, "error"));
+});
+
+// 壁纸
+async function refreshBg() {
+  const btn = $("#bgBtn");
+  btn.disabled = true;
+  const bgIcon = btn.querySelector("i");
+  if (bgIcon) bgIcon.className = "fa fa-spinner fa-spin";
+  try {
+    const res = await fetch("https://www.loliapi.com/acg/pc/?t=" + Date.now());
+    const html = await res.text();
+    const match = html.match(/href="([^"]+)"/);
+    const actualUrl = match ? match[1] : res.url;
+    document.body.style.backgroundImage = `url("${actualUrl}")`;
+    localStorage.setItem("mhkh_bg_url", actualUrl);
+  } catch {
+    const fallback = `https://www.loliapi.com/acg/pc/?t=${Date.now()}`;
+    document.body.style.backgroundImage = `url("${fallback}")`;
+    localStorage.setItem("mhkh_bg_url", fallback);
+  } finally {
+    btn.disabled = false;
+    if (bgIcon) bgIcon.className = "fa fa-image";
+  }
+}
+
+function loadSavedBg() {
+  const saved = localStorage.getItem("mhkh_bg_url");
+  if (saved) {
+    document.body.style.backgroundImage = `url("${saved}")`;
+  }
+}
+
+function applyBackgroundUrl(url, message = "自定义背景已应用") {
+  const value = String(url || "").trim();
+  if (!value) {
+    toast("请输入图片 URL", "error");
+    return false;
+  }
+  if (!/^https?:\/\//i.test(value) && !value.startsWith("data:image/")) {
+    toast("图片 URL 需要以 http:// 或 https:// 开头", "error");
+    return false;
+  }
+  document.body.style.backgroundImage = `url("${value.replace(/"/g, "%22")}")`;
+  localStorage.setItem("mhkh_bg_url", value);
+  toast(message, "success");
+  return true;
+}
+
+function openBgSourceModal() {
+  $("#bgSourceOverlay")?.classList.add("show");
+  $("#bgUrlInput")?.focus();
+}
+
+function closeBgSourceModal() {
+  $("#bgSourceOverlay")?.classList.remove("show");
+}
+
+// 自定义背景：支持本地上传或网络 URL
+$("#customBgBtn").addEventListener("click", openBgSourceModal);
+$("#bgSourceCancelBtn")?.addEventListener("click", closeBgSourceModal);
+$("#bgSourceOverlay")?.addEventListener("click", (e) => {
+  if (e.target.id === "bgSourceOverlay") closeBgSourceModal();
+});
+$("#bgLocalBtn")?.addEventListener("click", () => {
+  closeBgSourceModal();
+  $("#bgUploadInput").click();
+});
+$("#bgRandomBtn")?.addEventListener("click", async () => {
+  closeBgSourceModal();
+  await refreshBg();
+});
+$("#bgClearBtn")?.addEventListener("click", () => {
+  document.body.style.backgroundImage = "";
+  localStorage.removeItem("mhkh_bg_url");
+  closeBgSourceModal();
+  toast("背景已清除", "success");
+});
+$("#bgUrlApplyBtn")?.addEventListener("click", () => {
+  const ok = applyBackgroundUrl($("#bgUrlInput")?.value, "URL 背景已应用");
+  if (ok) closeBgSourceModal();
+});
+$("#bgUrlInput")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    $("#bgUrlApplyBtn")?.click();
+  }
+});
+$("#bgUploadInput").addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (!file.type.startsWith("image/")) {
+    toast("请选择图片文件", "error");
+    e.target.value = "";
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    applyBackgroundUrl(ev.target.result, "本地背景已应用");
+  };
+  reader.onerror = () => toast("读取图片失败", "error");
+  reader.readAsDataURL(file);
+  e.target.value = ""; // 允许重复选择同一文件
+});
+
+$("#bgBtn").addEventListener("click", refreshBg);
+
+// 预览壁纸
+let bgViewMode = false;
+$("#bgViewBtn").addEventListener("click", () => {
+  bgViewMode = !bgViewMode;
+  document.body.classList.toggle("view-bg", bgViewMode);
+  const viewIcon = $("#bgViewBtn i");
+  if (viewIcon) { viewIcon.className = bgViewMode ? "fa fa-compress" : "fa fa-arrows-alt"; }
+});
+
+$("#bgSaveBtn").addEventListener("click", async () => {
+  const url = localStorage.getItem("mhkh_bg_url");
+  if (!url) { toast("没有可保存的壁纸", "error"); return; }
+  try {
+    toast("正在获取图片...", "loading");
+    const res = await api("/api/get-bg-url", { method: "POST", body: JSON.stringify({ url }) });
+    const a = document.createElement("a");
+    a.href = res.data_url;
+    const ext = res.final_url.split(".").pop().split("?")[0] || "jpg";
+    a.download = `wallpaper_${Date.now()}.${ext}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    toast("壁纸下载已开始", "success");
+  } catch (err) { toast(err.message, "error"); }
+});
+$("#themeBtn").addEventListener("click", () => {
+  setTheme(document.body.classList.contains("dark") ? "light" : "dark");
+});
+
+// ---- Search buttons (direct binding) ----
+function bindClick(id, fn, key) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener("click", (e) => { e.preventDefault(); pageState[key] = 1; fn().catch((err) => toast(err.message, "error")); });
+}
+bindClick("searchUsers", loadUsers, "users");
+bindClick("searchDynamics", loadDynamics, "dynamics");
+bindClick("searchFriends", loadFriends, "friends");
+bindClick("searchStar", loadStarNotices, "star");
+bindClick("searchNotices", loadAdminNotices, "notices");
+bindClick("searchLogs", loadLogs, "logs");
+
+// Clear buttons
+function bindClear(clearId, inputId, fn, key) {
+  const el = document.getElementById(clearId);
+  if (!el) return;
+  el.addEventListener("click", () => { const i = document.getElementById(inputId); if (i) { i.value = ""; } pageState[key] = 1; fn().catch(() => {}); });
+}
+bindClear("userSearchClear", "userSearch", loadUsers, "users");
+bindClear("dynamicSearchClear", "dynamicSearch", loadDynamics, "dynamics");
+bindClear("friendSearchClear", "friendSearch", loadFriends, "friends");
+bindClear("starSearchClear", "starSearch", loadStarNotices, "star");
+bindClear("noticeSearchClear", "noticeSearch", loadAdminNotices, "notices");
+bindClear("logSearchClear", "logSearch", loadLogs, "logs");
+
+// Debounced search inputs
+function bindSearchInput(inputId, loadFn, stateKey) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  const fn = debounce(() => { pageState[stateKey] = 1; loadFn().catch((err) => toast(err.message, "error")); }, 300);
+  input.addEventListener("input", fn);
+}
+bindSearchInput("userSearch", loadUsers, "users");
+bindSearchInput("dynamicSearch", loadDynamics, "dynamics");
+bindSearchInput("friendSearch", loadFriends, "friends");
+bindSearchInput("starSearch", loadStarNotices, "star");
+bindSearchInput("noticeSearch", loadAdminNotices, "notices");
+bindSearchInput("logSearch", loadLogs, "logs");
+
+// Filters
+function bindChange(id, fn, key) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener("change", () => { pageState[key] = 1; fn().catch((err) => toast(err.message, "error")); });
+}
+bindChange("dynamicStatusFilter", loadDynamics, "dynamics");
+bindChange("logModuleFilter", loadLogs, "logs");
+bindChange("logActionFilter", loadLogs, "logs");
+bindChange("logOperatorFilter", loadLogs, "logs");
+bindChange("logStartDate", loadLogs, "logs");
+bindChange("logEndDate", loadLogs, "logs");
+
+// ---- Auto-refresh timer ----
+let autoRefreshCountdown = 30;
+let autoRefreshTimer = null;
+
+function updateTimerDisplay() {
+  const el = $("#autoRefreshTimer");
+  if (!el) return;
+  if (currentView !== "dashboard") {
+    el.textContent = "";
+    return;
+  }
+  el.textContent = `${autoRefreshCountdown}s`;
+}
+
+function startAutoRefresh() {
+  stopAutoRefresh();
+  autoRefreshCountdown = 30;
+  updateTimerDisplay();
+  autoRefreshTimer = setInterval(() => {
+    autoRefreshCountdown--;
+    if (autoRefreshCountdown <= 0) {
+      autoRefreshCountdown = 30;
+      refreshCurrent().catch(() => {});
+      const el = $("#lastRefreshTime");
+      if (el) el.textContent = `更新于 ${new Date().toLocaleTimeString("zh-CN")}`;
+    }
+    updateTimerDisplay();
+  }, 1000);
+}
+
+function stopAutoRefresh() {
+  if (autoRefreshTimer) {
+    clearInterval(autoRefreshTimer);
+    autoRefreshTimer = null;
+  }
+}
+
+function resetAutoRefresh() {
+  autoRefreshCountdown = 30;
+  updateTimerDisplay();
+}
+
+// ---- CSV Export ----
+function exportXlsx(filename, headers, rows) {
+  const data = [headers.map((h) => h.label)];
+  rows.forEach((r) => {
+    data.push(headers.map((h) => r[h.key] ?? ""));
+  });
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+  XLSX.writeFile(wb, filename);
+  toast("导出成功", "success");
+}
+
+async function fetchAll(basePath) {
+  const all = [];
+  let page = 1;
+  while (true) {
+    const sep = basePath.includes("?") ? "&" : "?";
+    const res = await api(`${basePath}${sep}page=${page}&limit=200`);
+    const rows = res.items || res;
+    all.push(...rows);
+    if (rows.length < 200) break;
+    page++;
+  }
+  return all;
+}
+
+$("#exportUsers")?.addEventListener("click", async () => {
+  try {
+    const q = encodeURIComponent(($("#userSearch")?.value || "").trim());
+    const rows = await fetchAll(`/api/users?q=${q}`);
+    rows.forEach((r) => { r.statusText = Number(r.status || 0) === 1 ? "在线" : "离线"; });
+    exportXlsx("用户列表.xlsx", [
+      { key: "uid", label: "UID" }, { key: "name", label: "用户名" },
+      { key: "email", label: "邮箱" }, { key: "nick", label: "昵称" },
+      { key: "sex", label: "性别" }, { key: "desc", label: "签名" }, { key: "statusText", label: "在线状态" },
+    ], rows);
+  } catch (err) { toast(err.message || "导出失败", "error"); }
+});
+
+$("#aiReviewDynamicsBtn")?.addEventListener("click", async () => {
+  const ok = await customConfirm("让 AI 自动审批最多 50 条「审核中」动态？\n违规将隐藏、合规将通过，明细可在「操作日志」查看。");
+  if (!ok) return;
+  try {
+    toast("AI 正在审批，请稍候...", "loading");
+    const res = await api("/api/dynamics/ai-review", { method: "POST" });
+    const s = (res && res.summary) || {};
+    const reviewed = s.reviewed ?? 0;
+    const approved = s.approved_count ?? 0;
+    const hidden = s.hidden_count ?? 0;
+    const skipped = s.skipped_count ?? 0;
+    if (reviewed === 0) {
+      toast("当前没有待审核动态", "success");
+    } else {
+      toast(`已审 ${reviewed} 条 · 通过 ${approved} / 隐藏 ${hidden} / 跳过 ${skipped}`, "success");
+    }
+    loadDynamics();
+  } catch (err) {
+    toast(err.message || "AI 审批失败", "error");
+  }
+});
+
+$("#exportDynamics")?.addEventListener("click", async () => {
+  try {
+    const q = encodeURIComponent(($("#dynamicSearch")?.value || "").trim());
+    const status = $("#dynamicStatusFilter")?.value || "";
+    const statusParam = status !== "" ? `&status=${status}` : "";
+    const rows = await fetchAll(`/api/dynamics?q=${q}${statusParam}`);
+    const statusMap = { 0: "正常", 1: "审核中", 2: "违规隐藏" };
+    rows.forEach((r) => {
+      r.statusText = statusMap[r.status] || "未知";
+      r.create_time = formatDateTime(r.create_time);
+    });
+    exportXlsx("动态列表.xlsx", [
+      { key: "id", label: "ID" }, { key: "uid", label: "UID" },
+      { key: "name", label: "用户" }, { key: "content", label: "内容" },
+      { key: "like_count", label: "点赞" }, { key: "statusText", label: "状态" },
+      { key: "create_time", label: "时间" },
+    ], rows);
+  } catch (err) { toast(err.message || "导出失败", "error"); }
+});
+
+$("#exportStar")?.addEventListener("click", async () => {
+  try {
+    const q = encodeURIComponent(($("#starSearch")?.value || "").trim());
+    const rows = await fetchAll(`/api/star-notices?q=${q}`);
+    exportXlsx("公告列表.xlsx", [
+      { key: "title", label: "标题" }, { key: "author", label: "作者" },
+      { key: "content", label: "内容" },
+    ], rows);
+  } catch (err) { toast(err.message || "导出失败", "error"); }
+});
+
+$("#exportLogs")?.addEventListener("click", async () => {
+  try {
+    const q = encodeURIComponent(($("#logSearch")?.value || "").trim());
+    const module = $("#logModuleFilter")?.value || "";
+    const action = $("#logActionFilter")?.value || "";
+    const operator = $("#logOperatorFilter")?.value || "";
+    const startDate = $("#logStartDate")?.value || "";
+    const endDate = $("#logEndDate")?.value || "";
+    let basePath = `/api/logs?q=${encodeURIComponent("")}`;
+    if (q) basePath = `/api/logs?q=${q}`;
+    if (module) basePath += `&module=${encodeURIComponent(module)}`;
+    if (action) basePath += `&action=${encodeURIComponent(action)}`;
+    if (operator) basePath += `&operator=${encodeURIComponent(operator)}`;
+    if (startDate) basePath += `&start_date=${encodeURIComponent(startDate)}`;
+    if (endDate) basePath += `&end_date=${encodeURIComponent(endDate)}`;
+    const rows = await fetchAll(basePath);
+    rows.forEach((r) => {
+      r.action = formatAction(r.action);
+      r.create_time = formatDateTime(r.create_time);
+    });
+    exportXlsx("操作日志.xlsx", [
+      { key: "id", label: "ID" }, { key: "module", label: "模块" },
+      { key: "action", label: "操作" }, { key: "summary", label: "说明" },
+      { key: "user", label: "操作人" }, { key: "create_time", label: "时间" },
+    ], rows);
+  } catch (err) { toast(err.message || "导出失败", "error"); }
+});
+
+$("#exportNotices")?.addEventListener("click", async () => {
+  try {
+    const q = encodeURIComponent(($("#noticeSearch")?.value || "").trim());
+    const rows = await fetchAll(`/api/admin-notices?q=${q}`);
+    rows.forEach((r) => {
+      r.deliveredText = r.delivered ? "已处理" : "未处理";
+      r.create_time = formatDateTime(r.create_time);
+    });
+    exportXlsx("通知列表.xlsx", [
+      { key: "id", label: "ID" }, { key: "target_uid", label: "目标UID" },
+      { key: "title", label: "标题" }, { key: "content", label: "内容" },
+      { key: "level", label: "等级" }, { key: "deliveredText", label: "状态" },
+      { key: "create_time", label: "时间" },
+    ], rows);
+  } catch (err) { toast(err.message || "导出失败", "error"); }
+});
+
+function downloadMaintenance(type) {
+  window.location.href = `/api/maintenance/export?type=${encodeURIComponent(type)}`;
+}
+
+function appendSheet(wb, sheetName, headers, rows) {
+  const data = [headers.map((h) => h.label)];
+  rows.forEach((r) => data.push(headers.map((h) => r[h.key] ?? "")));
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+}
+
+async function exportAllMaintenanceExcel() {
+  const [users, dynamics, logs] = await Promise.all([
+    fetchAll("/api/users"),
+    fetchAll("/api/dynamics"),
+    fetchAll("/api/logs"),
+  ]);
+  const statusMap = { 0: "正常", 1: "审核中", 2: "违规隐藏" };
+  users.forEach((r) => {
+    r.roleText = roleLabels[Number(r.role || 0)] || "普通用户";
+    r.statusText = Number(r.status || 0) === 1 ? "在线" : "离线";
+  });
+  dynamics.forEach((r) => {
+    r.statusText = statusMap[Number(r.status || 0)] || "未知";
+    r.create_time = formatDateTime(r.create_time);
+  });
+  logs.forEach((r) => {
+    r.action = formatAction(r.action);
+    r.create_time = formatDateTime(r.create_time);
+  });
+  const wb = XLSX.utils.book_new();
+  appendSheet(wb, "用户", [
+    { key: "uid", label: "UID" },
+    { key: "name", label: "用户名" },
+    { key: "email", label: "邮箱" },
+    { key: "nick", label: "昵称" },
+    { key: "roleText", label: "角色" },
+    { key: "statusText", label: "在线状态" },
+  ], users);
+  appendSheet(wb, "动态", [
+    { key: "id", label: "ID" },
+    { key: "uid", label: "UID" },
+    { key: "name", label: "用户" },
+    { key: "content", label: "内容" },
+    { key: "like_count", label: "点赞数" },
+    { key: "statusText", label: "状态" },
+    { key: "create_time", label: "时间" },
+  ], dynamics);
+  appendSheet(wb, "日志", [
+    { key: "id", label: "ID" },
+    { key: "module", label: "模块" },
+    { key: "action", label: "操作" },
+    { key: "summary", label: "说明" },
+    { key: "user", label: "操作人" },
+    { key: "ip", label: "IP" },
+    { key: "create_time", label: "时间" },
+  ], logs);
+  XLSX.writeFile(wb, `FoolChat数据备份_${Date.now()}.xlsx`);
+  toast("备份已导出", "success");
+}
+
+$("#backupUsersCsv")?.addEventListener("click", () => downloadMaintenance("users"));
+$("#backupDynamicsCsv")?.addEventListener("click", () => downloadMaintenance("dynamics"));
+$("#backupLogsCsv")?.addEventListener("click", () => downloadMaintenance("logs"));
+$("#backupFriendsCsv")?.addEventListener("click", () => downloadMaintenance("friends"));
+$("#backupNoticesCsv")?.addEventListener("click", () => downloadMaintenance("notices"));
+$("#backupStarNoticesCsv")?.addEventListener("click", () => downloadMaintenance("star_notices"));
+$("#backupAdminAppsCsv")?.addEventListener("click", () => downloadMaintenance("admin_applications"));
+$("#backupEmailDraftsCsv")?.addEventListener("click", () => downloadMaintenance("email_drafts"));
+$("#backupAllCsv")?.addEventListener("click", () => downloadMaintenance("all"));
+$("#backupAllExcel")?.addEventListener("click", async () => {
+  try { await exportAllMaintenanceExcel(); } catch (err) { toast(err.message || "导出失败", "error"); }
+});
+$("#maintenanceRefreshBtn")?.addEventListener("click", () => {
+  loadMaintenance().then(() => toast("数据维护信息已刷新", "success")).catch((err) => toast(err.message, "error"));
+});
+// ---- Batch operations ----
+function updateBatchBar() {
+  const bar = $("#userBatchBar");
+  const count = selectedIds.users.size;
+  $("#userBatchCount").textContent = `已选 ${count} 项`;
+  bar?.classList.toggle("show", count > 0);
+}
+
+document.addEventListener("change", (e) => {
+  if (e.target.dataset.selectAll !== undefined) {
+    const checked = e.target.checked;
+    document.querySelectorAll("#usersTable [data-select-id]").forEach((cb) => {
+      cb.checked = checked;
+      const id = cb.dataset.selectId;
+      if (checked) selectedIds.users.add(id);
+      else selectedIds.users.delete(id);
+    });
+    updateBatchBar();
+  }
+  if (e.target.dataset.selectId !== undefined) {
+    const id = e.target.dataset.selectId;
+    if (e.target.checked) selectedIds.users.add(id);
+    else selectedIds.users.delete(id);
+    updateBatchBar();
+  }
+});
+
+$("#batchDeselectUsers")?.addEventListener("click", () => {
+  selectedIds.users.clear();
+  document.querySelectorAll("#usersTable .table-checkbox").forEach((cb) => { cb.checked = false; });
+  updateBatchBar();
+});
+
+$("#batchDeleteUsers")?.addEventListener("click", async () => {
+  const count = selectedIds.users.size;
+  if (!count) return;
+  const deletePassword = await customConfirm(`确定删除选中的 ${count} 个账号吗？相关动态和好友关系也会删除。`, { password: true });
+  if (!deletePassword) return;
+  let success = 0, fail = 0;
+  for (const uid of selectedIds.users) {
+    try {
+      await api(`/api/users/${uid}`, { method: "DELETE", headers: { "X-Delete-Password": deletePassword } });
+      success++;
+    } catch { fail++; }
+  }
+  selectedIds.users.clear();
+  toast(`批量删除完成：成功 ${success}${fail ? `，失败 ${fail}` : ""}`, fail ? "error" : "success");
+  await refreshCurrent();
+});
+
+// ---- Table click actions ----
+document.body.addEventListener("click", async (event) => {
+  const target = event.target;
+  try {
+    if (target.dataset.pager) {
+      pageState[target.dataset.pager] = Number(target.dataset.page);
+      await refreshCurrent();
+      return;
+    }
+    if (target.dataset.editUser) {
+      const cells = target.closest("tr").querySelectorAll("td");
+      openFormModal("editUser", {
+        uid: target.dataset.editUser,
+        name: cells[2].textContent.trim(),
+        email: cells[3].textContent.trim(),
+        nick: cells[4].textContent.trim(),
+        sex: cells[5].textContent.trim(),
+        icon: cells[6].textContent.trim(),
+        desc: cells[8].textContent.trim(),
+      });
+    }
+    if (target.dataset.roleUser) {
+      if (!await customConfirm(`确定任命 UID ${target.dataset.roleUser} 为管理员吗？`)) return;
+      await api(`/api/users/${target.dataset.roleUser}/role`, { method: "PATCH", body: JSON.stringify({ role: 1 }) });
+      toast("管理员已任命");
+      await refreshCurrent();
+    }
+    if (target.dataset.unroleUser) {
+      if (!await customConfirm(`确定取消 UID ${target.dataset.unroleUser} 的管理员身份吗？`)) return;
+      await api(`/api/users/${target.dataset.unroleUser}/role`, { method: "PATCH", body: JSON.stringify({ role: 0 }) });
+      toast("管理员身份已取消");
+      await refreshCurrent();
+    }
+    if (target.dataset.resetUser) {
+      openFormModal("resetPassword", { uid: target.dataset.resetUser });
+    }
+    if (target.dataset.deleteUser) {
+      const deletePassword = await customConfirm(`确定删除 UID ${target.dataset.deleteUser}？相关动态、好友关系和请求将一并删除。`, { password: true });
+      if (!deletePassword) return;
+      await api(`/api/users/${target.dataset.deleteUser}`, { method: "DELETE", headers: { "X-Delete-Password": deletePassword } });
+      toast("用户已删除");
+      await refreshCurrent();
+    }
+    if (target.dataset.deleteDynamic) {
+      if (!await customConfirm(`确定删除动态 ${target.dataset.deleteDynamic} 吗？`)) return;
+      await api(`/api/dynamics/${target.dataset.deleteDynamic}`, { method: "DELETE" });
+      toast("动态已删除");
+      await refreshCurrent();
+    }
+    if (target.dataset.hideDynamic) {
+      await api(`/api/dynamics/${target.dataset.hideDynamic}/status`, { method: "PATCH", body: JSON.stringify({ status: 2 }) });
+      toast("动态已隐藏");
+      await refreshCurrent();
+    }
+    if (target.dataset.auditDynamic) {
+      await api(`/api/dynamics/${target.dataset.auditDynamic}/status`, { method: "PATCH", body: JSON.stringify({ status: 1 }) });
+      toast("动态已设为待审核");
+      await refreshCurrent();
+    }
+    if (target.dataset.passDynamic) {
+      await api(`/api/dynamics/${target.dataset.passDynamic}/status`, { method: "PATCH", body: JSON.stringify({ status: 0 }) });
+      toast("动态审核已通过");
+      await refreshCurrent();
+    }
+    if (target.dataset.restoreDynamic) {
+      await api(`/api/dynamics/${target.dataset.restoreDynamic}/status`, { method: "PATCH", body: JSON.stringify({ status: 0 }) });
+      toast("动态已恢复");
+      await refreshCurrent();
+    }
+    if (target.dataset.editDynamic) {
+      const cells = target.closest("tr").querySelectorAll("td");
+      openFormModal("editDynamic", {
+        id: target.dataset.editDynamic,
+        content: cells[3].textContent.trim(),
+        like_count: cells[4].textContent.trim() || 0,
+      });
+    }
+    if (target.dataset.apply) {
+      await api(`/api/friend-applies/${target.dataset.apply}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: Number(target.dataset.status) }),
+      });
+      toast("申请状态已更新");
+      await refreshCurrent();
+    }
+    if (target.dataset.deleteFriend) {
+      const selfID = target.dataset.deleteFriend;
+      const friendID = target.dataset.friendId;
+      if (!await customConfirm(`确定删除 UID ${selfID} 和 UID ${friendID} 的好友关系吗？`)) return;
+      await api(`/api/friends/${selfID}/${friendID}`, { method: "DELETE" });
+      toast("好友关系已删除");
+      await refreshCurrent();
+    }
+    if (target.dataset.starTitle) {
+      if (!await customConfirm(`确定删除公告「${target.dataset.starTitle}」吗？`)) return;
+      const title = encodeURIComponent(target.dataset.starTitle);
+      const author = encodeURIComponent(target.dataset.starAuthor);
+      await api(`/api/star-notices?title=${title}&author=${author}`, { method: "DELETE" });
+      toast("公告已删除");
+      await refreshCurrent();
+    }
+    if (target.dataset.editStar) {
+      const cells = target.closest("tr").querySelectorAll("td");
+      openFormModal("editStar", {
+        original_title: target.dataset.editStar,
+        original_author: target.dataset.starAuthor,
+        title: cells[0].textContent.trim(),
+        author: cells[1].textContent.trim(),
+        content: cells[2].textContent.trim(),
+      });
+    }
+    if (target.dataset.deleteNotice) {
+      if (!await customConfirm(`确定删除通知 ${target.dataset.deleteNotice} 吗？`)) return;
+      await api(`/api/admin-notices/${target.dataset.deleteNotice}`, { method: "DELETE" });
+      toast("通知已删除");
+      await refreshCurrent();
+    }
+    if (target.dataset.editNotice) {
+      await loadNoticeTargetOptions();
+      const cells = target.closest("tr").querySelectorAll("td");
+      const targetText = cells[1].textContent.trim();
+      const deliveredText = cells[5].textContent.trim();
+      const deliveredVal = deliveredText === "已处理" || deliveredText === "Delivered" ? "1" : "0";
+      openFormModal("editNotice", {
+        id: target.dataset.editNotice,
+        target_uid: targetText === "广播" ? "" : targetText,
+        level: cells[2].textContent.trim().toLowerCase(),
+        title: cells[3].textContent.trim(),
+        content: cells[4].textContent.trim(),
+        delivered: deliveredVal,
+      });
+    }
+  } catch (err) { toast(err.message, "error"); }
+});
+
+// 每页条数切换
+document.addEventListener("click", async (e) => {
+  const btn = e.target.closest(".pager-size-btn");
+  if (btn) {
+    const viewKey = btn.dataset.pagerSize;
+    pageSizeState[viewKey] = Number(btn.dataset.size);
+    pageState[viewKey] = 1;
+    await refreshCurrent();
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  const tag = event.target.tagName.toLowerCase();
+  if (tag === "input" || tag === "textarea" || tag === "select") return;
+  if (event.key.toLowerCase() === "r") {
+    resetAutoRefresh();
+    const el = $("#lastRefreshTime");
+    if (el) el.textContent = `更新于 ${new Date().toLocaleTimeString("zh-CN")}`;
+    refreshCurrent().catch((err) => toast(err.message, "error"));
+  }
+  if (event.key.toLowerCase() === "d") {
+    setTheme(document.body.classList.contains("dark") ? "light" : "dark");
+  }
+});
+window.addEventListener("resize", debounce(() => {
+  if (lastAnalyticsData && currentView === "dashboard") renderAnalytics(lastAnalyticsData);
+}, 150));
+
+setTheme(localStorage.getItem("mhkh_admin_theme") || "light");
+loadSavedBg();
+activateView(currentView);
+
+// 恢复用户信息
+const savedName = localStorage.getItem("mhkh_user_name");
+const savedEmail = localStorage.getItem("mhkh_user_email");
+if (savedName) {
+  $("#brandName").textContent = savedName;
+  $("#brandEmail").textContent = savedEmail || "";
+}
+
+function showLogin() {
+  document.documentElement.classList.add("is-logged-out");
+  document.documentElement.classList.remove("is-logged-in");
+  document.body.classList.add("logged-out");
+  $("#loginPage").classList.remove("hide");
+  localStorage.removeItem("mhkh_logged_in");
+  localStorage.removeItem("mhkh_user_name");
+  localStorage.removeItem("mhkh_user_email");
+  localStorage.removeItem("mhkh_user_uid");
+  localStorage.removeItem("mhkh_user_role");
+  $("#brandName").textContent = "Admin";
+  $("#brandEmail").textContent = "";
+  updateAdminApplyNav();
+}
+
+function hideLogin() {
+  document.documentElement.classList.remove("is-logged-out");
+  document.documentElement.classList.add("is-logged-in");
+  document.body.classList.remove("logged-out");
+  $("#loginPage").classList.add("hide");
+  localStorage.setItem("mhkh_logged_in", "1");
+  updateAdminApplyNav();
+}
+
+function updateAdminApplyNav() {
+  const role = localStorage.getItem("mhkh_user_role");
+  const nav = $("#navAdminApply");
+  if (nav) nav.style.display = role === "2" ? "" : "none";
+}
+
+let loginSubmitting = false;
+$("#passwordToggle")?.addEventListener("click", () => {
+  const input = $("#loginPassword");
+  const btn = $("#passwordToggle");
+  const visible = input.type === "text";
+  input.type = visible ? "password" : "text";
+  const nowVisible = !visible;
+  btn.setAttribute("aria-pressed", nowVisible ? "true" : "false");
+  btn.title = nowVisible ? "隐藏密码" : "显示密码";
+  btn.setAttribute("aria-label", btn.title);
+});
+
+$("#loginForm")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (loginSubmitting) return;
+  const form = event.currentTarget;
+  const name = form.name.value.trim();
+  const password = form.password.value;
+  const btn = form.querySelector('button[type="submit"]');
+  const errEl = $("#loginError");
+  errEl.textContent = "";
+  if (!name) { errEl.textContent = "请输入用户名"; return; }
+  if (!password) { errEl.textContent = "请输入密码"; return; }
+  loginSubmitting = true;
+  btn.textContent = "登录中...";
+  btn.disabled = true;
+  try {
+    const data = await api("/api/login", { method: "POST", body: JSON.stringify({ name, password }) });
+    form.reset();
+    localStorage.setItem("mhkh_user_name", data.name);
+    localStorage.setItem("mhkh_user_email", data.email || "");
+    localStorage.setItem("mhkh_user_uid", data.uid || "");
+    localStorage.setItem("mhkh_user_role", data.role || "");
+    hideLogin();
+    $("#brandName").textContent = data.name;
+    $("#brandEmail").textContent = data.email || "";
+    await refreshCurrent();
+    if (currentView === "dashboard") {
+      startAutoRefresh();
+      const el = $("#lastRefreshTime");
+      if (el) el.textContent = `最后刷新 ${new Date().toLocaleTimeString("zh-CN")}`;
+    }
+  } catch (err) {
+    $("#loginError").textContent = err.message || "登录失败";
+  } finally {
+    loginSubmitting = false;
+    btn.textContent = "登录";
+    btn.disabled = false;
+  }
+});
+
+$("#logoutBtn")?.addEventListener("click", async () => {
+  try { await api("/api/logout", { method: "POST" }); } catch {}
+  showLogin();
+});
+
+// 移动端侧边栏汉堡菜单
+$("#sidebarToggle")?.addEventListener("click", () => {
+  $("#sidebar")?.classList.toggle("open");
+});
+// 点击侧边栏导航后自动收起
+document.querySelectorAll(".sidebar .nav").forEach(btn => {
+  btn.addEventListener("click", () => {
+    if (window.innerWidth <= 900) $("#sidebar")?.classList.remove("open");
+  });
+});
+
+(function setupForgotPassword() {
+  const card = $("#loginCard");
+  if (!card) return;
+  const openBtn = $("#forgotPwdBtn");
+  const backBtn = $("#forgotBackBtn");
+  const prevBtn = $("#forgotPrevBtn");
+  const nextBtn = $("#forgotNextBtn");
+  const sendBtn = $("#forgotSendBtn");
+  const nameInput = $("#forgotName");
+  const emailInput = $("#forgotEmail");
+  const codeInput = $("#forgotCode");
+  const pwd1Input = $("#forgotPwd1");
+  const pwd2Input = $("#forgotPwd2");
+  const maskedEmailEl = $("#forgotMaskedEmail");
+  const stepTips = {
+    1: $("#forgotStep1Tip"),
+    2: $("#forgotStep2Tip"),
+    3: $("#forgotStep3Tip"),
+  };
+  const backFace = card.querySelector(".login-face-back");
+  const stepNodes = backFace.querySelectorAll(".forgot-step");
+  const stepLabels = backFace.querySelectorAll(".forgot-steps .step");
+
+  let state = { step: 1, name: "", email: "", code: "", maskedEmail: "", sendCooldown: 0, sending: false };
+  let cooldownTimer = null;
+
+  function setTip(step, text, isError) {
+    const el = stepTips[step];
+    if (!el) return;
+    el.textContent = text || "";
+    el.classList.toggle("is-error", !!isError);
+  }
+
+  function showStep(step) {
+    state.step = step;
+    stepNodes.forEach((node) => {
+      node.style.display = Number(node.dataset.step) === step ? "" : "none";
+    });
+    stepLabels.forEach((label) => {
+      label.classList.toggle("active", Number(label.dataset.step) === step);
+    });
+    prevBtn.style.display = step === 1 ? "none" : "";
+    nextBtn.textContent = step === 3 ? "重置密码" : "下一步";
+    setTip(1, ""); setTip(2, ""); setTip(3, "");
+  }
+
+  function resetState() {
+    state = { step: 1, name: "", email: "", code: "", maskedEmail: "", sendCooldown: 0, sending: false };
+    nameInput.value = "";
+    emailInput.value = "";
+    codeInput.value = "";
+    pwd1Input.value = "";
+    pwd2Input.value = "";
+    maskedEmailEl.textContent = "--";
+    sendBtn.disabled = false;
+    sendBtn.textContent = "发送验证码";
+    if (cooldownTimer) { clearInterval(cooldownTimer); cooldownTimer = null; }
+    showStep(1);
+  }
+
+  function flipToForgot() {
+    resetState();
+    $("#forgotPanel").style.display = "";
+    $("#applyPanel").style.display = "none";
+    $("#backHeroDesc").innerHTML = "找回登录密码<br>请按步骤完成验证";
+    card.classList.add("is-flipped");
+    setTimeout(() => nameInput.focus(), 480);
+  }
+
+  function flipToLogin() {
+    card.classList.remove("is-flipped");
+    if (cooldownTimer) { clearInterval(cooldownTimer); cooldownTimer = null; }
+  }
+
+  function startCooldown(seconds) {
+    state.sendCooldown = seconds;
+    sendBtn.disabled = true;
+    sendBtn.textContent = `${seconds}s 后重发`;
+    if (cooldownTimer) clearInterval(cooldownTimer);
+    cooldownTimer = setInterval(() => {
+      state.sendCooldown -= 1;
+      if (state.sendCooldown <= 0) {
+        clearInterval(cooldownTimer);
+        cooldownTimer = null;
+        sendBtn.disabled = false;
+        sendBtn.textContent = "重新发送";
+      } else {
+        sendBtn.textContent = `${state.sendCooldown}s 后重发`;
+      }
+    }, 1000);
+  }
+
+  function isValidEmail(s) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+  }
+
+  async function handleNext() {
+    if (state.step === 1) {
+      const name = nameInput.value.trim();
+      if (!name) { setTip(1, "请输入账号", true); return; }
+      try {
+        nextBtn.disabled = true;
+        nextBtn.textContent = "验证中...";
+        const data = await api("/api/password-reset/lookup", {
+          method: "POST",
+          body: JSON.stringify({ name }),
+          skipLoading: true,
+        });
+        state.name = name;
+        state.maskedEmail = data.masked_email || "";
+        maskedEmailEl.textContent = state.maskedEmail || "--";
+        showStep(2);
+        setTimeout(() => emailInput.focus(), 30);
+      } catch (err) {
+        setTip(1, err.message || "账号查询失败", true);
+      } finally {
+        nextBtn.disabled = false;
+        nextBtn.textContent = "下一步";
+      }
+      return;
+    }
+    if (state.step === 2) {
+      const email = emailInput.value.trim();
+      const code = codeInput.value.trim();
+      if (!email) { setTip(2, "请输入邮箱", true); return; }
+      if (!isValidEmail(email)) { setTip(2, "邮箱格式不正确", true); return; }
+      if (!code) { setTip(2, "请输入验证码", true); return; }
+      try {
+        nextBtn.disabled = true;
+        nextBtn.textContent = "验证中...";
+        await api("/api/password-reset/verify", {
+          method: "POST",
+          body: JSON.stringify({ name: state.name, email, code }),
+          skipLoading: true,
+        });
+        state.email = email;
+        state.code = code;
+        showStep(3);
+        setTimeout(() => pwd1Input.focus(), 30);
+      } catch (err) {
+        setTip(2, err.message || "邮箱或验证码错误", true);
+      } finally {
+        nextBtn.disabled = false;
+        nextBtn.textContent = "下一步";
+      }
+      return;
+    }
+    if (state.step === 3) {
+      const pwd1 = pwd1Input.value;
+      const pwd2 = pwd2Input.value;
+      if (pwd1.length < 6) { setTip(3, "新密码至少 6 位", true); return; }
+      if (pwd1 !== pwd2) { setTip(3, "两次输入的密码不一致", true); return; }
+      try {
+        nextBtn.disabled = true;
+        await api("/api/password-reset/reset", {
+          method: "POST",
+          body: JSON.stringify({ name: state.name, email: state.email, code: state.code, password: pwd1 }),
+          skipLoading: true,
+        });
+        toast("密码已重置，请使用新密码登录", "success");
+        flipToLogin();
+      } catch (err) {
+        setTip(3, err.message || "重置失败", true);
+      } finally {
+        nextBtn.disabled = false;
+      }
+    }
+  }
+
+  async function handleSend() {
+    if (state.sending || sendBtn.disabled) return;
+    if (!state.name) { setTip(2, "账号信息丢失，请返回上一步", true); return; }
+    const email = emailInput.value.trim();
+    if (!email) { setTip(2, "请输入邮箱", true); return; }
+    if (!isValidEmail(email)) { setTip(2, "邮箱格式不正确", true); return; }
+    state.sending = true;
+    sendBtn.disabled = true;
+    const originalText = sendBtn.textContent;
+    sendBtn.textContent = "发送中...";
+    try {
+      const data = await api("/api/password-reset/send", {
+        method: "POST",
+        body: JSON.stringify({ name: state.name, email }),
+        skipLoading: true,
+      });
+      state.email = email;
+      if (data.masked_email) {
+        state.maskedEmail = data.masked_email;
+        maskedEmailEl.textContent = state.maskedEmail;
+      }
+      setTip(2, "验证码已发送，请查收邮箱", false);
+      startCooldown(60);
+    } catch (err) {
+      setTip(2, err.message || "发送失败", true);
+      sendBtn.disabled = false;
+      sendBtn.textContent = originalText;
+    } finally {
+      state.sending = false;
+    }
+  }
+
+  openBtn?.addEventListener("click", flipToForgot);
+  backBtn?.addEventListener("click", flipToLogin);
+  prevBtn?.addEventListener("click", () => {
+    if (state.step > 1) showStep(state.step - 1);
+  });
+  nextBtn?.addEventListener("click", handleNext);
+  sendBtn?.addEventListener("click", handleSend);
+})();
+
+(async () => {
+  try {
+    const res = await fetch("/api/summary", { headers: { "Content-Type": "application/json" } });
+    if (res.ok) {
+      hideLogin();
+      await refreshCurrent();
+      if (currentView === "dashboard") {
+        startAutoRefresh();
+        const el = $("#lastRefreshTime");
+        if (el) el.textContent = `最后刷新 ${new Date().toLocaleTimeString("zh-CN")}`;
+      }
+    } else if (res.status === 401) {
+      showLogin();
+    } else if (res.status === 403) {
+      if (localStorage.getItem("mhkh_logged_in")) {
+        hideLogin();
+        toast("当前账号权限不足或登录校验暂时失败，请稍后刷新", "error");
+      } else {
+        showLogin();
+      }
+    } else if (localStorage.getItem("mhkh_logged_in")) {
+      hideLogin();
+      toast("后台数据加载失败，请检查服务状态", "error");
+    } else {
+      showLogin();
+    }
+  } catch {
+    if (localStorage.getItem("mhkh_logged_in")) hideLogin();
+  }
+})();
+// ---- AI Assistant ----
+let aiPendingAction = null;
+let aiCurrentSessionId = 0;
+let aiTypewriterTimer = null;
+let aiSending = false;
+
+function setAISending(sending) {
+  aiSending = sending;
+  const input = document.getElementById("aiInput");
+  const sendBtn = document.getElementById("aiSendBtn");
+  const confirmBtn = document.getElementById("aiConfirmAction");
+  const cancelBtn = document.getElementById("aiCancelAction");
+  if (input) input.disabled = sending;
+  if (sendBtn) {
+    sendBtn.disabled = sending;
+    sendBtn.textContent = sending ? "发送中..." : "发送";
+  }
+  if (confirmBtn) confirmBtn.disabled = sending;
+  if (cancelBtn) cancelBtn.disabled = sending;
+}
+
+function renderMarkdown(text) {
+  if (!text) return "";
+  const codeBlocks = [];
+  const inlineCodes = [];
+
+  let src = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, _lang, code) => {
+    codeBlocks.push(code.replace(/\n$/, ""));
+    return `CB${codeBlocks.length - 1}`;
+  });
+  src = src.replace(/`([^`\n]+)`/g, (_, code) => {
+    inlineCodes.push(code);
+    return `IC${inlineCodes.length - 1}`;
+  });
+
+  let s = escapeHtml(src);
+
+  const lines = s.split("\n");
+  const out = [];
+  let inList = false;
+  for (const line of lines) {
+    const li = line.match(/^[ \t]*(?:[-*]|\d+\.)[ \t]+(.+)$/);
+    if (li) {
+      if (!inList) { out.push("<ul>"); inList = true; }
+      out.push(`<li>${li[1]}</li>`);
+      continue;
+    }
+    if (inList) { out.push("</ul>"); inList = false; }
+    let m;
+    if ((m = line.match(/^###\s+(.+)$/))) { out.push(`<h5>${m[1]}</h5>`); continue; }
+    if ((m = line.match(/^##\s+(.+)$/))) { out.push(`<h4>${m[1]}</h4>`); continue; }
+    if ((m = line.match(/^#\s+(.+)$/))) { out.push(`<h3>${m[1]}</h3>`); continue; }
+    out.push(line);
+  }
+  if (inList) out.push("</ul>");
+  s = out.join("\n");
+
+  s = s.replace(/\*\*([^*\n]+?)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/(^|[^*])\*([^*\n]+?)\*(?!\*)/g, "$1<em>$2</em>");
+  s = s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g,
+    '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+
+  s = s.replace(/\n+(<(?:\/?ul|li|h[3-5]))/g, "$1");
+  s = s.replace(/(<\/(?:ul|li|h[3-5])>)\n+/g, "$1");
+  s = s.replace(/\n/g, "<br>");
+
+  s = s.replace(/CB(\d+)/g, (_, i) =>
+    `<pre class="md-code"><code>${escapeHtml(codeBlocks[Number(i)])}</code></pre>`);
+  s = s.replace(/IC(\d+)/g, (_, i) =>
+    `<code class="md-inline-code">${escapeHtml(inlineCodes[Number(i)])}</code>`);
+
+  return s;
+}
+
+function showAIThinking() {
+  const box = document.getElementById("aiMessages");
+  if (!box) return null;
+  const item = document.createElement("div");
+  item.className = "ai-message assistant ai-thinking";
+  item.innerHTML = `<div class="ai-thinking-dots"><span></span><span></span><span></span></div>`;
+  box.appendChild(item);
+  box.scrollTop = box.scrollHeight;
+  return item;
+}
+
+async function appendAIMessage(role, content, result, opts = {}) {
+  const box = document.getElementById("aiMessages");
+  if (!box) return;
+  const item = document.createElement("div");
+  item.className = `ai-message ${role}`;
+  const text = document.createElement("div");
+  item.appendChild(text);
+  box.appendChild(item);
+  box.scrollTop = box.scrollHeight;
+  if (!opts.instant && role === "assistant" && content) {
+    await typewriterText(text, content, 18);
+    text.innerHTML = renderMarkdown(content);
+  } else if (role === "assistant" && content) {
+    text.innerHTML = renderMarkdown(content);
+  } else {
+    text.textContent = content || "";
+  }
+  if (result !== undefined && result !== null) {
+    const rendered = renderAIResult(result);
+    if (rendered) item.appendChild(rendered);
+  }
+  box.scrollTop = box.scrollHeight;
+}
+
+function typewriterText(el, text, speed = 18) {
+  return new Promise((resolve) => {
+    if (aiTypewriterTimer) { clearInterval(aiTypewriterTimer); aiTypewriterTimer = null; }
+    let i = 0;
+    el.classList.add("ai-cursor");
+    el.textContent = "";
+    aiTypewriterTimer = setInterval(() => {
+      i++;
+      el.textContent = text.slice(0, i);
+      const box = document.getElementById("aiMessages");
+      if (box) box.scrollTop = box.scrollHeight;
+      if (i >= text.length) {
+        clearInterval(aiTypewriterTimer);
+        aiTypewriterTimer = null;
+        el.classList.remove("ai-cursor");
+        resolve();
+      }
+    }, speed);
+  });
+}
+
+function renderAIResult(result) {
+  if (result === null || result === undefined) return null;
+  if (typeof result === "object" && !Array.isArray(result)) {
+    const keys = Object.keys(result);
+    if ("ok" in result && (keys.length === 1 || (keys.length === 2 && "id" in result))) {
+      const tag = document.createElement("div");
+      tag.className = `ai-result-tag ${result.ok ? "ok" : "fail"}`;
+      if (result.ok) {
+        tag.textContent = "id" in result ? `✓ 已创建 (ID ${result.id})` : "✓ 执行成功";
+      } else {
+        tag.textContent = "✗ 执行失败";
+      }
+      return tag;
+    }
+    if (isGroupedAIResult(result)) {
+      return buildAIGroupedResult(result);
+    }
+    return buildAITable([result]);
+  }
+  if (Array.isArray(result)) {
+    if (result.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "ai-empty-state";
+      empty.textContent = "无匹配数据";
+      return empty;
+    }
+    if (typeof result[0] === "object" && result[0] !== null) {
+      return buildAITable(result);
+    }
+  }
+  const pre = document.createElement("pre");
+  pre.textContent = JSON.stringify(result, null, 2);
+  return pre;
+}
+
+const aiColumnLabels = {
+  id: "ID",
+  uid: "UID",
+  name: "账号",
+  email: "邮箱",
+  nick: "昵称",
+  desc: "描述",
+  sex: "性别",
+  icon: "头像",
+  role: "角色",
+  status: "状态",
+  content: "内容",
+  like_count: "点赞数",
+  create_time: "时间",
+  module: "模块",
+  action: "操作",
+  summary: "说明",
+  operator: "操作人",
+  target_uid: "目标 UID",
+  target_name: "目标账号",
+  title: "标题",
+  author: "作者",
+  level: "等级",
+  delivered: "投递状态",
+  from_uid: "申请方 UID",
+  from_name: "申请方",
+  to_uid: "接收方 UID",
+  to_name: "接收方",
+  back_name: "备注",
+  self_id: "用户 UID",
+  self_name: "用户账号",
+  self_nick: "用户昵称",
+  friend_id: "好友 UID",
+  friend_name: "好友账号",
+  friend_nick: "好友昵称",
+  back: "备注",
+  users: "用户",
+  dynamics: "动态",
+  today_dynamics: "今日动态",
+  pending_dynamics: "待审核动态",
+  today_users: "今日新增用户",
+  today_operations: "今日操作",
+  total_operations: "累计操作",
+  pending_applies: "待处理申请",
+  notices: "通知",
+  keyword: "关键词",
+  affected: "影响数量",
+  preview: "预览数据",
+  star_notices: "公告",
+  groups: "待审分组",
+  report: "运营日报",
+  errors: "异常操作",
+  online_users: "在线用户",
+  pending_count: "待审数量",
+  total_users: "用户总数",
+  total_dynamics: "动态总数",
+  total_logs: "日志总数",
+  today_logins: "今日登录",
+  today_errors: "今日异常",
+  date: "日期",
+  total: "总数",
+  ops: "操作次数",
+  today_notices: "今日通知",
+  today_ai_chats: "今日 AI 对话",
+  users_count: "涉及用户数",
+  reviewed: "已审条数",
+  approved_count: "通过",
+  hidden_count: "隐藏",
+  skipped_count: "跳过",
+  verdict: "判定",
+  reason: "理由",
+};
+
+const aiGroupLabels = {
+  summary: "今日概览",
+  users: "用户结果",
+  dynamics: "动态结果",
+  logs: "日志结果",
+  notices: "通知结果",
+  star_notices: "公告结果",
+  groups: "待审动态分组",
+  errors: "异常操作",
+  preview: "预览数据",
+  top_operators: "活跃操作人",
+  top_modules: "活跃模块",
+  details: "审批明细",
+};
+
+function isGroupedAIResult(result) {
+  return Object.keys(aiGroupLabels).some((key) => {
+    const v = result[key];
+    return Array.isArray(v) || (v && typeof v === "object");
+  });
+}
+
+function buildAIGroupedResult(result) {
+  const wrap = document.createElement("div");
+  wrap.className = "ai-grouped-result";
+  for (const [key, label] of Object.entries(aiGroupLabels)) {
+    const val = result[key];
+    if (val === undefined || val === null) continue;
+    const isArr = Array.isArray(val);
+    const isObj = !isArr && typeof val === "object";
+    if (!isArr && !isObj) continue;
+    const section = document.createElement("div");
+    section.className = "ai-result-section";
+    const title = document.createElement("h4");
+    title.textContent = isArr ? `${label}（${val.length}）` : label;
+    section.appendChild(title);
+    if (isArr && val.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "ai-empty-state";
+      empty.textContent = "暂无匹配数据";
+      section.appendChild(empty);
+    } else {
+      const rows = isArr ? val : [val];
+      section.appendChild(buildAITable(rows, key));
+    }
+    wrap.appendChild(section);
+  }
+  return wrap;
+}
+
+function getAIStatusLabel(value, row = {}, context = "") {
+  const status = Number(value);
+  const isUserRow = context === "users" || (("role" in row || "email" in row || "nick" in row) && !("content" in row));
+  const isDynamicRow = context === "dynamics" || "like_count" in row || ("content" in row && "uid" in row && !("title" in row));
+  const isApplyRow = context === "friend_applies" || ("from_uid" in row && "to_uid" in row);
+  if (isUserRow) return status === 1 ? "在线" : "离线";
+  if (isApplyRow) {
+    if (status === 0) return "待处理";
+    if (status === 1) return "已通过";
+    if (status === 2) return "已拒绝";
+    return String(value);
+  }
+  if (isDynamicRow) {
+    if (status === 0) return "正常";
+    if (status === 1) return "审核中";
+    if (status === 2) return "违规隐藏";
+    return String(value);
+  }
+  return String(value);
+}
+
+function formatAICellValue(key, value, row = {}, context = "") {
+  if (value === null || value === undefined) return "";
+  if (key === "role") {
+    const role = Number(value);
+    if (role === 2) return "超级管理员";
+    if (role === 1) return "管理员";
+    return "普通用户";
+  }
+  if (key === "status") {
+    return getAIStatusLabel(value, row, context);
+  }
+  if (key === "delivered") {
+    return Number(value) === 1 ? "已处理" : "未处理";
+  }
+  if (key === "level") {
+    const labels = { info: "普通", success: "成功", warning: "警告", error: "错误" };
+    return labels[String(value)] || String(value);
+  }
+  if (key === "sex") {
+    const sex = Number(value);
+    if (sex === 1) return "男";
+    if (sex === 2) return "女";
+    return "未知";
+  }
+  if (key === "create_time") {
+    return formatDateTime(value);
+  }
+  if (key === "verdict") {
+    const labels = { approve: "通过", hide: "隐藏", skip: "跳过" };
+    return labels[String(value).toLowerCase()] || String(value);
+  }
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function buildAITable(rows, context = "") {
+  const wrap = document.createElement("div");
+  wrap.style.overflowX = "auto";
+  wrap.style.marginTop = "8px";
+  const keys = Object.keys(rows[0]);
+  const tbl = document.createElement("table");
+  tbl.className = "ai-result-table";
+  const thead = document.createElement("thead");
+  const trh = document.createElement("tr");
+  for (const k of keys) {
+    const th = document.createElement("th");
+    th.textContent = aiColumnLabels[k] || k;
+    trh.appendChild(th);
+  }
+  thead.appendChild(trh);
+  tbl.appendChild(thead);
+  const tbody = document.createElement("tbody");
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    for (const k of keys) {
+      const td = document.createElement("td");
+      td.textContent = formatAICellValue(k, r[k], r, context);
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  tbl.appendChild(tbody);
+  wrap.appendChild(tbl);
+  return wrap;
+}
+
+function setAIPending(action, text) {
+  aiPendingAction = action || null;
+  const box = document.getElementById("aiPendingBox");
+  if (!box) return;
+  if (!action) {
+    box.classList.remove("show");
+    const pwd = document.getElementById("aiDeletePassword");
+    if (pwd) pwd.value = "";
+    return;
+  }
+  document.getElementById("aiPendingText").textContent = text || "请确认是否执行该操作。";
+  const pwd = document.getElementById("aiDeletePassword");
+  if (pwd) {
+    pwd.value = "";
+    pwd.style.display = action.name === "delete_user" ? "block" : "none";
+  }
+  box.classList.add("show");
+}
+
+async function sendAIMessage(confirm = false) {
+  if (aiSending) return;
+  const input = document.getElementById("aiInput");
+  if (!input) return;
+  const message = input.value.trim();
+  if (!confirm && !message) return;
+  if (!aiCurrentSessionId) aiCurrentSessionId = Date.now();
+  if (!confirm) {
+    await appendAIMessage("user", message, null, { instant: true });
+    input.value = "";
+  }
+  const payload = confirm ? {
+    session_id: aiCurrentSessionId,
+    confirm: true,
+    pending_action: aiPendingAction,
+    delete_password: document.getElementById("aiDeletePassword")?.value || "",
+  } : { session_id: aiCurrentSessionId, message };
+
+  setAISending(true);
+  const thinkingEl = showAIThinking();
+  try {
+    const data = await api("/api/ai/chat", { method: "POST", body: JSON.stringify(payload), skipLoading: true });
+    if (thinkingEl && thinkingEl.parentNode) thinkingEl.remove();
+    if (data.session_id) aiCurrentSessionId = data.session_id;
+    await appendAIMessage("assistant", data.reply || "", data.result);
+    if (data.requires_confirm && data.action) {
+      setAIPending(data.action, data.reply);
+    } else {
+      setAIPending(null);
+      if (data.action) handleClientAIAction(data.action);
+    }
+    if (data.result && currentView !== "ai") refreshCurrent().catch(() => {});
+    loadAISessions().catch(() => {});
+  } finally {
+    if (thinkingEl && thinkingEl.parentNode) thinkingEl.remove();
+    setAISending(false);
+    if (!aiPendingAction && currentView === "ai") {
+      setTimeout(() => { try { input.focus(); } catch {} }, 0);
+    }
+  }
+}
+
+function handleClientAIAction(action) {
+  if (!action || !action.name) return;
+  const args = action.args || {};
+  switch (action.name) {
+    case "switch_wallpaper":
+      refreshBg();
+      break;
+    case "set_theme": {
+      const mode = args.mode;
+      if (mode === "toggle") {
+        setTheme(document.body.classList.contains("dark") ? "light" : "dark");
+      } else if (mode === "dark" || mode === "light") {
+        setTheme(mode);
+      }
+      break;
+    }
+    case "download_wallpaper":
+      document.getElementById("bgSaveBtn")?.click();
+      break;
+    case "upload_wallpaper":
+      document.getElementById("customBgBtn")?.click();
+      break;
+    case "clear_wallpaper":
+      document.getElementById("bgClearBtn")?.click();
+      break;
+    case "set_wallpaper_url":
+      if (args.url) applyBackgroundUrl(args.url, "URL 背景已应用");
+      break;
+    case "toggle_bg_preview":
+      document.getElementById("bgViewBtn")?.click();
+      break;
+    case "navigate": {
+      const view = String(args.view || "").toLowerCase();
+      const allowed = ["dashboard", "monitor", "maintenance", "users", "dynamics", "friends", "applies", "star", "notices", "ai"];
+      if (allowed.includes(view)) {
+        activateView(view);
+        refreshCurrent().catch((err) => toast(err.message, "error"));
+      } else {
+        toast("未知页面：" + (args.view || ""), "error");
+      }
+      break;
+    }
+    case "refresh_view":
+      refreshCurrent().catch((err) => toast(err.message, "error"));
+      break;
+    case "logout":
+      (async () => {
+        try { await api("/api/logout", { method: "POST" }); } catch {}
+        if (typeof showLogin === "function") showLogin();
+        else location.reload();
+      })();
+      break;
+  }
+}
+
+async function loadAISessions() {
+  const list = document.getElementById("aiSessionsList");
+  if (!list) return;
+  try {
+    const sessions = await api("/api/ai/sessions", { skipLoading: true });
+    if (!sessions || sessions.length === 0) {
+      list.innerHTML = `<div class="ai-empty-state">还没有历史聊天</div>`;
+      return;
+    }
+    list.innerHTML = sessions.map((s) => {
+      const id = s.session_id;
+      const rawTitle = (s.title || "新对话").toString();
+      const title = rawTitle.length > 28 ? rawTitle.slice(0, 28) + "…" : rawTitle;
+      const active = String(id) === String(aiCurrentSessionId) ? " active" : "";
+      return `<div class="ai-session-item${active}" data-session-id="${id}" title="${escapeHtml(rawTitle)}">
+        <span class="ai-session-title">${escapeHtml(title)}</span>
+        <button class="ai-session-delete" data-delete-session="${id}" title="删除">✕</button>
+      </div>`;
+    }).join("");
+  } catch (err) {
+    list.innerHTML = `<div class="ai-empty-state">加载失败：${escapeHtml(err.message || "")}</div>`;
+    console.error("loadAISessions error:", err);
+  }
+}
+
+async function switchAISession(sessionId) {
+  aiCurrentSessionId = Number(sessionId);
+  setAIPending(null);
+  const box = document.getElementById("aiMessages");
+  if (box) box.innerHTML = "";
+  try {
+    const rows = await api(`/api/ai/sessions/${sessionId}/messages`, { skipLoading: true });
+    if (!rows || rows.length === 0) {
+      await appendAIMessage("assistant", "（此会话暂无消息）", null, { instant: true });
+    } else {
+      for (const m of rows) {
+        let result = null;
+        if (m.result_json) {
+          try { result = typeof m.result_json === "string" ? JSON.parse(m.result_json) : m.result_json; } catch {}
+        }
+        await appendAIMessage(m.role, m.content || "", result, { instant: true });
+      }
+    }
+    loadAISessions().catch(() => {});
+  } catch (err) {
+    toast(err.message || "加载失败", "error");
+  }
+}
+
+function newAISession() {
+  aiCurrentSessionId = 0;
+  setAIPending(null);
+  const box = document.getElementById("aiMessages");
+  if (box) {
+    box.innerHTML = `<div class="ai-message assistant">你好，我可以帮你查询用户、查询动态、审核/隐藏动态、发送通知，也能切换壁纸和主题。删除操作会要求二次确认。</div>`;
+  }
+  loadAISessions().catch(() => {});
+}
+
+async function deleteAISession(sessionId) {
+  if (!await customConfirm("确定删除该聊天记录吗？")) return;
+  try {
+    await api(`/api/ai/sessions/${sessionId}`, { method: "DELETE", skipLoading: true });
+    if (Number(sessionId) === Number(aiCurrentSessionId)) {
+      newAISession();
+    } else {
+      loadAISessions().catch(() => {});
+    }
+    toast("已删除", "success");
+  } catch (err) {
+    toast(err.message || "删除失败", "error");
+  }
+}
+
+document.getElementById("aiSendBtn")?.addEventListener("click", () => {
+  sendAIMessage(false).catch((err) => appendAIMessage("assistant", err.message, null, { instant: true }));
+});
+
+document.getElementById("aiInput")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    sendAIMessage(false).catch((err) => appendAIMessage("assistant", err.message, null, { instant: true }));
+  }
+});
+
+document.querySelectorAll(".ai-help-item").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const tpl = btn.getAttribute("data-template") || "";
+    if (!tpl) return;
+    const input = document.getElementById("aiInput");
+    if (!input) return;
+    input.value = tpl;
+    input.focus();
+    const match = /\[[^\]]+\]/.exec(tpl);
+    if (match) {
+      input.setSelectionRange(match.index, match.index + match[0].length);
+    } else {
+      input.setSelectionRange(tpl.length, tpl.length);
+    }
+  });
+});
+
+document.getElementById("aiConfirmAction")?.addEventListener("click", () => {
+  if (!aiPendingAction) return;
+  sendAIMessage(true).catch((err) => appendAIMessage("assistant", err.message, null, { instant: true }));
+});
+
+document.getElementById("aiCancelAction")?.addEventListener("click", () => {
+  setAIPending(null);
+  appendAIMessage("assistant", "已取消本次操作。", null, { instant: true });
+});
+
+document.getElementById("aiNewChatBtn")?.addEventListener("click", () => {
+  newAISession();
+});
+
+document.getElementById("aiSessionsList")?.addEventListener("click", (e) => {
+  const delBtn = e.target.closest("[data-delete-session]");
+  if (delBtn) {
+    e.stopPropagation();
+    deleteAISession(delBtn.dataset.deleteSession);
+    return;
+  }
+  const item = e.target.closest("[data-session-id]");
+  if (item) {
+    switchAISession(item.dataset.sessionId);
+  }
+});
+
+/* ═══════════════════════════════════════════
+   管理员申请 — 登录页翻转卡片 + 步骤式
+   ═══════════════════════════════════════════ */
+(function setupApply() {
+  const card = $("#loginCard");
+  if (!card) return;
+  let step = 1;
+
+  function showApplyStep(n) {
+    step = n;
+    document.querySelectorAll("#applyPanel .apply-step").forEach(el => {
+      el.style.display = Number(el.dataset.step) === n ? "" : "none";
+    });
+    document.querySelectorAll("#applyPanel .forgot-steps .step").forEach(el => {
+      const s = Number(el.dataset.step);
+      el.classList.toggle("active", s <= n);
+    });
+    $("#applyPrevBtn").style.display = n > 1 ? "" : "none";
+    $("#applyNextBtn").textContent = n === 3 ? "提交申请" : "下一步";
+    $("#applyError").textContent = "";
+  }
+
+  function flipToApply() {
+    $("#forgotPanel").style.display = "none";
+    $("#applyPanel").style.display = "";
+    $("#backHeroDesc").innerHTML = "申请管理员权限<br>提交信息等待审核";
+    $("#applyAccount").value = "";
+    $("#applyEmail").value = "";
+    $("#applyStatusHint")?.remove();
+    showApplyStep(1);
+    card.classList.add("is-flipped");
+    setTimeout(() => $("#applyAccount").focus(), 480);
+  }
+
+  $("#openApplyBtn")?.addEventListener("click", flipToApply);
+  $("#applyBackBtn")?.addEventListener("click", () => card.classList.remove("is-flipped"));
+  $("#applyPrevBtn")?.addEventListener("click", () => { if (step > 1) showApplyStep(step - 1); });
+
+  $("#applyNextBtn")?.addEventListener("click", async () => {
+    const errEl = $("#applyError");
+    errEl.textContent = "";
+
+    if (step === 1) {
+      const account = ($("#applyAccount")?.value || "").trim();
+      if (!account) { errEl.textContent = "请输入账号名称"; return; }
+      try {
+        const data = await api(`/api/admin-apply/status?account=${encodeURIComponent(account)}`);
+        if (data.status === "not_found") {
+          errEl.textContent = data.message || "账号不存在";
+          return;
+        }
+        if (data.status === "is_admin") {
+          errEl.textContent = data.message || "该账号已是管理员，无需申请";
+          return;
+        }
+        if (data.status === "pending") {
+          errEl.textContent = "该账号已有一条待审核的申请，无法重复提交";
+          return;
+        }
+      } catch (_) {}
+      showApplyStep(2);
+      setTimeout(() => $("#applyEmail").focus(), 200);
+    } else if (step === 2) {
+      const email = ($("#applyEmail")?.value || "").trim();
+      if (!email || !email.includes("@")) { errEl.textContent = "请输入正确的邮箱地址"; return; }
+      $("#applyReviewAccount").textContent = ($("#applyAccount")?.value || "").trim();
+      $("#applyReviewEmail").textContent = email;
+      showApplyStep(3);
+    } else if (step === 3) {
+      const account = ($("#applyAccount")?.value || "").trim();
+      const email = ($("#applyEmail")?.value || "").trim();
+      const btn = $("#applyNextBtn");
+      btn.disabled = true;
+      btn.textContent = "提交中...";
+      try {
+        await api("/api/admin-apply/submit", { method: "POST", body: JSON.stringify({ account, email }) });
+        card.classList.remove("is-flipped");
+        toast("申请已提交，请等待审核");
+      } catch (err) {
+        errEl.textContent = err.message || "提交失败";
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "提交申请";
+      }
+    }
+  });
+
+})();
+
+/* ═══════════════════════════════════════════
+   管理员申请 — 审批列表
+   ═══════════════════════════════════════════ */
+const applyStatusLabels = { pending: "待审核", approved: "已通过", rejected: "已拒绝" };
+
+async function loadAdminApplies() {
+  const status = ($("#applyStatusFilter")?.value || "");
+  const page = pageState["admin-apply"] || 1;
+  const perPage = pageSizeState["admin-apply"] || PAGE_SIZE;
+  const params = new URLSearchParams({ page, limit: perPage });
+  if (status) params.set("status", status);
+  const data = await api(`/api/admin-apply/list?${params}`);
+  const items = data.items || [];
+  const total = data.total ?? items.length;
+  renderAdminApplyTable(items);
+  renderPager("adminApplyPager", "admin-apply", items, total);
+}
+
+function renderAdminApplyTable(items) {
+  const table = $("#adminApplyTable");
+  renderTable(table, [
+    { key: "id", label: "ID", width: "50px" },
+    { key: "account", label: "账号" },
+    { key: "email", label: "邮箱" },
+    { key: "status", label: "状态", width: "80px", render: (r) => {
+      const cls = r.status === "approved" ? "color:var(--ok)" : r.status === "rejected" ? "color:var(--danger)" : "color:#d97706";
+      return `<span style="${cls};font-weight:500">${applyStatusLabels[r.status] || r.status}</span>`;
+    }},
+    { key: "review_note", label: "审核备注", render: (r) => {
+      const note = r.review_note || "-";
+      return `<span style="max-width:200px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(note)}">${escapeHtml(note)}</span>`;
+    }},
+    { key: "reviewed_by", label: "审核人", width: "80px" },
+    { key: "create_time", label: "申请时间", width: "150px" },
+    { label: "操作", className: "admin-apply-actions-cell", width: "180px", render: (r) => `<div class="table-actions">${r.status === "pending" ? `
+      <button class="ok" data-apply-id="${r.id}" data-apply-action="approve">通过</button>
+      <button class="danger" data-apply-id="${r.id}" data-apply-action="reject">拒绝</button>
+    ` : "-"}</div>` },
+  ], items, { viewKey: "admin-apply" });
+}
+
+$("#refreshAdminApply")?.addEventListener("click", () => { pageState["admin-apply"] = 1; loadAdminApplies(); });
+$("#applyStatusFilter")?.addEventListener("change", () => { pageState["admin-apply"] = 1; loadAdminApplies(); });
+
+function showConfirmModal(message) {
+  return new Promise((resolve) => {
+    let overlay = $("#applyConfirmOverlay");
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.id = "applyConfirmOverlay";
+      overlay.className = "modal-overlay";
+      overlay.innerHTML = `<div class="modal-box apply-modal-box apply-review-modal">
+        <h2 id="applyConfirmTitle">确认操作</h2>
+        <p id="applyConfirmMsg" style="color:var(--text);font-size:14px;margin:16px 0 0;"></p>
+        <div class="modal-actions" style="margin-top:24px;padding-top:16px;border-top:1px solid var(--line);">
+          <button id="applyConfirmCancel">取消</button>
+          <button id="applyConfirmOk" class="primary">确认</button>
+        </div>
+      </div>`;
+      document.body.appendChild(overlay);
+      overlay.addEventListener("click", (e) => { if (e.target === e.currentTarget) { overlay.classList.remove("show"); resolve(false); } });
+      $("#applyConfirmCancel").addEventListener("click", () => { overlay.classList.remove("show"); resolve(false); });
+      $("#applyConfirmOk").addEventListener("click", () => { overlay.classList.remove("show"); resolve(true); });
+    }
+    $("#applyConfirmMsg").textContent = message;
+    overlay.classList.add("show");
+  });
+}
+
+function showPromptModal(message, defaultValue = "") {
+  return new Promise((resolve) => {
+    let overlay = $("#applyPromptOverlay");
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.id = "applyPromptOverlay";
+      overlay.className = "modal-overlay";
+      overlay.innerHTML = `<div class="modal-box apply-modal-box apply-review-modal">
+        <h2 id="applyPromptTitle">操作</h2>
+        <p id="applyPromptMsg" style="color:var(--text);font-size:14px;margin:16px 0 12px;"></p>
+        <textarea id="applyPromptInput" rows="3" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font-size:14px;resize:none;font-family:inherit;box-sizing:border-box;" placeholder="可留空"></textarea>
+        <div class="modal-actions" style="margin-top:16px;padding-top:16px;border-top:1px solid var(--line);">
+          <button id="applyPromptCancel">取消</button>
+          <button id="applyPromptOk" class="primary">确认</button>
+        </div>
+      </div>`;
+      document.body.appendChild(overlay);
+      overlay.addEventListener("click", (e) => { if (e.target === e.currentTarget) { overlay.classList.remove("show"); resolve(null); } });
+      $("#applyPromptCancel").addEventListener("click", () => { overlay.classList.remove("show"); resolve(null); });
+      $("#applyPromptOk").addEventListener("click", () => { const v = $("#applyPromptInput").value; overlay.classList.remove("show"); resolve(v); });
+    }
+    $("#applyPromptMsg").textContent = message;
+    $("#applyPromptInput").value = defaultValue;
+    overlay.classList.add("show");
+    setTimeout(() => $("#applyPromptInput").focus(), 100);
+  });
+}
+
+$("#adminApplyTable")?.addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-apply-action]");
+  if (!btn) return;
+  const id = Number(btn.dataset.applyId);
+  const action = btn.dataset.applyAction;
+
+  if (action === "approve") {
+    if (!await showConfirmModal("确认通过该管理员申请？通过后该账号将获得管理员权限。")) return;
+    try {
+      await api("/api/admin-apply/review", { method: "POST", body: JSON.stringify({ id, approve: true, note: "" }) });
+      toast("已批准");
+      loadAdminApplies();
+    } catch (err) { toast(err.message, "error"); }
+  } else if (action === "reject") {
+    const note = await showPromptModal("请输入拒绝原因（AI 将基于此生成正式通知邮件）：", "暂不满足管理员条件");
+    if (note === null) return;
+    try {
+      await api("/api/admin-apply/review", { method: "POST", body: JSON.stringify({ id, approve: false, note }) });
+      toast("已拒绝");
+      loadAdminApplies();
+    } catch (err) { toast(err.message, "error"); }
+  }
+});
+
+$("#aiRejectAllPending")?.addEventListener("click", async () => {
+  if (!await showConfirmModal("确认一键拒绝所有待审核申请？AI 将为每个申请生成拒绝通知邮件。")) return;
+  const btn = $("#aiRejectAllPending");
+  btn.disabled = true;
+  btn.textContent = "处理中...";
+  try {
+    const data = await api("/api/admin-apply/ai-reject-all", { method: "POST" });
+    toast(`已拒绝 ${data.count || 0} 条申请`);
+    loadAdminApplies();
+  } catch (err) { toast(err.message, "error"); }
+  finally { btn.disabled = false; btn.textContent = "AI 一键拒绝所有待审"; }
+});
+
+/* 初始化：根据角色显示/隐藏管理员申请导航 */
+updateAdminApplyNav();
+
+/* ═══════════════════════════════════════════
+   邮件通知
+   ═══════════════════════════════════════════ */
+const emailStatusLabels = { draft: "草稿", sending: "发送中", sent: "已发送", failed: "发送失败" };
+
+async function loadEmailDrafts() {
+  const status = ($("#emailStatusFilter")?.value || "");
+  const page = pageState["email-notify"] || 1;
+  const perPage = pageSizeState["email-notify"] || PAGE_SIZE;
+  const params = new URLSearchParams({ page, limit: perPage });
+  if (status) params.set("status", status);
+  const data = await api(`/api/email-draft/list?${params}`);
+  const items = data.items || [];
+  const total = data.total ?? items.length;
+  renderEmailDraftTable(items);
+  renderPager("emailDraftPager", "email-notify", items, total);
+}
+
+function renderEmailDraftTable(items) {
+  const table = $("#emailDraftTable");
+  renderTable(table, [
+    { key: "id", label: "ID", width: "40px" },
+    { key: "subject", label: "标题" },
+    { key: "target_type", label: "发送对象", render: (r) => r.target_type === "all" ? "全部用户" : (r.target_email || "-") },
+    { key: "status", label: "状态", width: "90px", render: (r) => {
+      const cls = r.status === "sent" ? "color:var(--ok)" : r.status === "failed" ? "color:var(--danger)" : "color:#d97706";
+      return `<span style="${cls};font-weight:500;white-space:nowrap">${emailStatusLabels[r.status] || r.status}</span>`;
+    }},
+    { key: "error_msg", label: "备注", render: (r) => {
+      const msg = r.error_msg || "-";
+      return `<span style="max-width:160px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(msg)}">${escapeHtml(msg)}</span>`;
+    }},
+    { key: "send_time", label: "发送时间", width: "130px", render: (r) => formatDateTime(r.send_time) },
+    { key: "create_time", label: "创建时间", width: "130px", render: (r) => formatDateTime(r.create_time) },
+    { label: "操作", className: "admin-apply-actions-cell", width: "auto", render: (r) => {
+      if (r.status === "draft" || r.status === "failed") return `<div class="table-actions">
+        <button data-email-id="${r.id}" data-email-action="edit">编辑</button>
+        <button data-email-id="${r.id}" data-email-action="send" style="color:var(--ok)">发送</button>
+        <button data-email-id="${r.id}" data-email-action="delete" style="color:var(--danger)">删除</button>
+      </div>`;
+      if (r.status === "sending") return `<div class="table-actions"><span style="color:#d97706;font-size:12px">发送中...</span></div>`;
+      return `<div class="table-actions">-</div>`;
+    } },
+  ], items, { viewKey: "email-notify" });
+}
+
+$("#searchEmailDraft")?.addEventListener("click", () => { pageState["email-notify"] = 1; loadEmailDrafts(); });
+$("#emailStatusFilter")?.addEventListener("change", () => { pageState["email-notify"] = 1; loadEmailDrafts(); });
+
+$("#createEmailBtn")?.addEventListener("click", async () => {
+  try { await loadEmailTargetOptions(); } catch (_) {}
+  openFormModal("createEmail");
+  setTimeout(() => {
+    const radio = document.querySelector('#modalForm input[name="target_type"][value="all"]');
+    if (radio) radio.checked = true;
+    const singleLabel = document.querySelector(".email-target-single");
+    if (singleLabel) singleLabel.style.display = "none";
+  }, 50);
+});
+
+document.addEventListener("change", (e) => {
+  if (e.target.name === "target_type" && e.target.closest("#modalForm")) {
+    const singleLabel = document.querySelector(".email-target-single");
+    if (singleLabel) singleLabel.style.display = e.target.value === "single" ? "" : "none";
+  }
+});
+
+$("#emailDraftTable")?.addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-email-action]");
+  if (!btn) return;
+  const id = Number(btn.dataset.emailId);
+  const action = btn.dataset.emailAction;
+
+  if (action === "edit") {
+    try { await loadEmailTargetOptions(); } catch (_) {}
+    const rows = await api(`/api/email-draft/list?limit=100`);
+    const item = (rows.items || []).find((r) => r.id === id);
+    if (!item) { toast("邮件不存在", "error"); return; }
+    openFormModal("createEmail", {
+      id: item.id,
+      target_type: item.target_type,
+      target_email: item.target_email,
+      subject: item.subject,
+      content: item.content,
+    });
+    setTimeout(() => {
+      const radio = document.querySelector(`#modalForm input[name="target_type"][value="${item.target_type}"]`);
+      if (radio) radio.checked = true;
+      const singleLabel = document.querySelector(".email-target-single");
+      if (singleLabel) singleLabel.style.display = item.target_type === "single" ? "" : "none";
+    }, 50);
+  } else if (action === "send") {
+    if (!await showConfirmModal("确认发送该邮件通知？")) return;
+    try {
+      btn.disabled = true;
+      btn.textContent = "发送中...";
+      await api("/api/email-draft/send", { method: "POST", body: JSON.stringify({ id }) });
+      toast("邮件发送中...");
+      // 重置筛选为全部，确保能看到已发送状态
+      const filter = $("#emailStatusFilter");
+      if (filter) filter.value = "";
+    } catch (err) {
+      toast(err.message, "error");
+    }
+    await loadEmailDrafts();
+    // 延时二次刷新，等待 goroutine 完成后更新最终状态
+    setTimeout(() => loadEmailDrafts(), 3000);
+  } else if (action === "delete") {
+    if (!await showConfirmModal("确认删除该邮件草稿？")) return;
+    try {
+      await api("/api/email-draft/delete", { method: "POST", body: JSON.stringify({ id }) });
+      toast("已删除");
+      loadEmailDrafts();
+    } catch (err) { toast(err.message, "error"); }
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
