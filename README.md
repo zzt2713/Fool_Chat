@@ -108,3 +108,53 @@ MySQL + Redis → VarifyServer → StatusServer → ChatServer / ChatServer2 →
 ```
 
 各项目的依赖、构建、配置与使用示例见对应目录下的 README。
+
+## 项目截图
+
+<!--
+![登录 / 注册](docs/screenshot-login.png)
+![聊天主窗口](docs/screenshot-chat.png)
+![通讯录 / 动态](docs/screenshot-dynamic.png)
+![后台管理端](docs/screenshot-admin.png)
+-->
+
+计划展示的内容：
+
+| 界面 | 展示内容 |
+|------|----------|
+| 登录 / 注册 | Fluent Design 风格账号界面，邮箱验证码注册流程 |
+| 聊天主窗口 | 会话列表、文字 / 图片气泡消息、表情、搜索 |
+| 通讯录 / 动态 | 好友申请与验证、朋友圈式动态发布浏览 |
+| 后台管理端 | 用户管理、公告通知、服务监控、数据概览 |
+
+## 使用的开源项目与致谢
+
+### UI 库
+
+| 开源项目 | 用途 |
+|----------|------|
+| [ElaWidgetTools](https://github.com/RainbowCandyX/ElaWidgetTools) | Fluent Design 风格 Qt 组件库 |
+| [Font Awesome](https://fontawesome.com/) | 后台管理端图标字体 |
+| [SheetJS](https://github.com/SheetJS/sheetjs) | 后台管理端 Excel 导出（`xlsx.full.min.js`） |
+
+### 核心框架与依赖
+
+| 开源项目 | 用途 |
+|----------|------|
+| [Qt](https://www.qt.io/) | 桌面客户端框架（Widgets / Multimedia / WebEngine） |
+| [Boost](https://www.boost.org/) | 服务端网络 IO（Asio / Beast）与基础库 |
+| [gRPC](https://grpc.io/) + [Protocol Buffers](https://protobuf.dev/) | 服务间通信与序列化（网关 / 状态 / 消息 / 验证码服务） |
+| [hiredis](https://github.com/redis/hiredis) | C++ Redis 客户端 |
+| [jsoncpp](https://github.com/open-source-parsers/jsoncpp) | C++ JSON 解析（TCP 协议报文） |
+| [mysql-connector-c++](https://github.com/mysql/mysql-connector-c++) | C++ MySQL 连接器 |
+| [Node.js](https://nodejs.org/)、[@grpc/grpc-js](https://github.com/grpc/grpc-node)、[nodemailer](https://github.com/nodemailer/nodemailer)、[mysql2](https://github.com/sidorares/node-mysql2) | 验证码服务 VarifyServer |
+| [Go](https://go.dev/)、[go-sql-driver/mysql](https://github.com/go-sql-driver/mysql)、[go-redis](https://github.com/redis/go-redis) | 后台管理端 fool_chat_admin_go |
+| [MySQL](https://www.mysql.com/) / [Redis](https://redis.io/) | 数据存储与缓存 |
+
+### 第三方 API 服务
+
+| 服务 | 用途 |
+|------|------|
+| [loliapi](https://www.loliapi.com/)（[文档](https://www.loliapi.com/docs/)） | 随机图片 API——客户端随机头像 / 背景图（`src/core/ranimg`）、后台管理端随机插图 |
+
+该项目仅个人学习使用。感谢所有开源项目的作者与社区开发者！
