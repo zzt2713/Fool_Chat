@@ -116,10 +116,9 @@ bool ContactUserList::eventFilter(QObject *watched, QEvent *event)
         QScrollBar *scrollBar = this->verticalScrollBar();
         int maxScrollValue = scrollBar->maximum();
         int currentValue = scrollBar->value();
-        //int pageSize = 10; // 每页加载的联系人数量
-
         if (maxScrollValue - currentValue <= 0) {
-            auto b_loaded = UserMgr::GetInstance()->IsLoadChatFin();
+            // 通讯录列表查通讯录游标（IsLoadChatFin 是消息页的，两页游标独立推进）
+            auto b_loaded = UserMgr::GetInstance()->IsLoadConFin();
             if(b_loaded){
                 return true;
             }
@@ -129,9 +128,8 @@ bool ContactUserList::eventFilter(QObject *watched, QEvent *event)
 
             _load_pending = true;
 
-            QTimer::singleShot(100, [this](){
+            QTimer::singleShot(100, [this]() {
                 _load_pending = false;
-                QCoreApplication::quit();
             });
             // 滚动到底部，加载新的联系人
             //发送信号通知聊天界面加载更多聊天内容
@@ -200,6 +198,8 @@ void ContactUserList::addContactUserList()
         this->setItemWidget(item,con_user_wid);
         con_user_wid->SetItemType(ListItemType::CONTACT_USER_ITEM);
     }
+    // 初始页插入后必须推进游标，否则首次触底 loadMoreConUser 会再取同一页造成重复
+    UserMgr::GetInstance()->UpdateContactLoadedCount();
 
     // 模拟联系人
     // for(int i = 0; i < 13; i++){

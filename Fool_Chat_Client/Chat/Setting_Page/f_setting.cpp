@@ -33,6 +33,8 @@
 #include "ElaSlider.h"
 #include "aimgr.h"
 #include <QPainter>
+#include <QPointer>
+#include <memory>
 
 // 壁纸缓存目录（应用目录/wallpaper/）：刷新/自定义时覆盖，启动与主题切换时读取
 static QString WallpaperFile(const QString& name)
@@ -70,26 +72,38 @@ F_Setting::F_Setting(QWidget *parent):ElaScrollPage(parent)
     // 壁纸：优先沿用上次会话缓存的图，没有才拉随机图（点"刷新图片/自定义壁纸"才会换）
     QPixmap lightImg(WallpaperFile("wallpaper_light.jpg"));
     QPixmap darkImg(WallpaperFile("wallpaper_dark.jpg"));
-    if (lightImg.isNull() || darkImg.isNull()) {
-        // 获取失败就留空，绝不用占位图覆盖缓存
-        QPixmap fetchedLight = ranImg::instance()->getImgOrNull("pc");
-        QThread::msleep(50);
-        QPixmap fetchedDark = ranImg::instance()->getImgOrNull("pc");
-        if (!fetchedLight.isNull()) {
-            lightImg = fetchedLight;
-            lightImg.save(WallpaperFile("wallpaper_light.jpg"), nullptr, 95);
-        }
-        if (!fetchedDark.isNull()) {
-            darkImg = fetchedDark;
-            darkImg.save(WallpaperFile("wallpaper_dark.jpg"), nullptr, 95);
-        }
-    }
-
     if (!lightImg.isNull()) {
         window->setWindowPixmap(ElaThemeType::Light, ComposeWallpaper(lightImg, ElaThemeType::Light));
     }
     if (!darkImg.isNull()) {
         window->setWindowPixmap(ElaThemeType::Dark, ComposeWallpaper(darkImg, ElaThemeType::Dark));
+    }
+    if (lightImg.isNull() || darkImg.isNull()) {
+        // 缓存缺失才拉网，异步回调补设壁纸并落盘；获取失败就留空，绝不用占位图覆盖缓存。
+        // 此处位于主窗口构造路径，同步拉图（双次 5s 超时重试）曾最坏冻结 GUI 20 秒
+        QPointer<ElaWindow> win = window;
+        auto applyWallpaper = [win](ElaThemeType::ThemeMode mode, const QPixmap& img) {
+            if (img.isNull() || win.isNull()) {
+                return;
+            }
+            const QString file = (mode == ElaThemeType::Light)
+                                     ? WallpaperFile("wallpaper_light.jpg")
+                                     : WallpaperFile("wallpaper_dark.jpg");
+            img.save(file, nullptr, 95);
+            win->setWindowPixmap(mode, ComposeWallpaper(img, mode));
+        };
+        if (lightImg.isNull()) {
+            ranImg::instance()->getImgOrNullAsync(
+                "pc", [applyWallpaper](QPixmap img) {
+                    applyWallpaper(ElaThemeType::Light, img);
+                });
+        }
+        if (darkImg.isNull()) {
+            ranImg::instance()->getImgOrNullAsync(
+                "pc", [applyWallpaper](QPixmap img) {
+                    applyWallpaper(ElaThemeType::Dark, img);
+                });
+        }
     }
     setWindowTitle("设置");
 
@@ -187,24 +201,56 @@ F_Setting::F_Setting(QWidget *parent):ElaScrollPage(parent)
     });
 
     connect(refreshButton, &ElaToolButton::clicked, this, [=]() {
-        QPixmap lightImg = ranImg::instance()->getImgOrNull("pc");
-        QThread::msleep(50);
-        QPixmap darkImg = ranImg::instance()->getImgOrNull("pc");
-        if (lightImg.isNull() && darkImg.isNull()) {
-            ADDMSG(ElaMessageBarType::Top, "网络图片获取失败，已保留原壁纸", this, 0, 3000);
-            return;
-        }
-        // 落盘缓存：重启沿用本次刷新的图（高质量 JPG，控制体积）；失败的那套不覆盖旧缓存
-        if (!lightImg.isNull()) {
-            lightImg.save(WallpaperFile("wallpaper_light.jpg"), nullptr, 95);
-            window->setWindowPixmap(ElaThemeType::Light, ComposeWallpaper(lightImg, ElaThemeType::Light));
-        }
-        if (!darkImg.isNull()) {
-            darkImg.save(WallpaperFile("wallpaper_dark.jpg"), nullptr, 95);
-            window->setWindowPixmap(ElaThemeType::Dark, ComposeWallpaper(darkImg, ElaThemeType::Dark));
-        }
-        window->update();
-
+        // 先切到图片绘制模式，否则图换了窗口也不画（与自定义壁纸行为一致）
+        _windowPixmapButton->setChecked(true);
+        refreshButton->setEnabled(false);
+        QPointer<ElaWindow> win = window;
+        QPointer<ElaPushButton> btn = refreshButton;
+        QPointer<F_Setting> self = this;
+        auto pending = std::make_shared<int>(2);
+        auto failed = std::make_shared<int>(0);
+        // 异步拉图并逐张落地：同步版最坏卡 GUI 20s，且只有全失败才有提示
+        auto onOneDone = [win, btn, self, pending, failed](const QPixmap& img,
+                                                           ElaThemeType::ThemeMode mode) {
+            if (self.isNull() || win.isNull()) {
+                return;
+            }
+            if (img.isNull()) {
+                ++(*failed);
+            }
+            else {
+                // 失败的那套不覆盖旧缓存（落盘缓存供重启沿用）
+                const QString file = (mode == ElaThemeType::Light)
+                                         ? WallpaperFile("wallpaper_light.jpg")
+                                         : WallpaperFile("wallpaper_dark.jpg");
+                img.save(file, nullptr, 95);
+                win->setWindowPixmap(mode, ComposeWallpaper(img, mode));
+            }
+            if (--(*pending) > 0) {
+                return;
+            }
+            if (!btn.isNull()) {
+                btn->setEnabled(true);
+            }
+            win->update();
+            if (*failed == 2) {
+                ADDMSG(ElaMessageBarType::Top, "网络图片获取失败，已保留原壁纸",
+                       self.data(), 0, 3000);
+            }
+            else if (*failed == 1) {
+                ADDMSG(ElaMessageBarType::Top, "一张图片获取失败，对应主题已保留原壁纸",
+                       self.data(), 0, 3000);
+            }
+            else {
+                ADDMSG(ElaMessageBarType::Top, "壁纸已刷新", self.data(), 1, 2000);
+            }
+        };
+        ranImg::instance()->getImgOrNullAsync("pc", [onOneDone](QPixmap img) {
+            onOneDone(img, ElaThemeType::Light);
+        });
+        ranImg::instance()->getImgOrNullAsync("pc", [onOneDone](QPixmap img) {
+            onOneDone(img, ElaThemeType::Dark);
+        });
     });
 
     // 自定义壁纸：本地图片作为壁纸并缓存，重启沿用

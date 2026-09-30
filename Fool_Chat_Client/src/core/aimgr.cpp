@@ -1,10 +1,14 @@
 #include "aimgr.h"
 #include "ElaTheme.h"
+#include "usermgr.h"
+#include "tcpmgr.h"
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QJsonDocument>
 #include <QRegularExpression>
 #include <QTimer>
+#include <QSettings>
+#include <QCoreApplication>
 
 namespace {
 // 降级模式下追加到 system 提示末尾的单行 JSON 协议说明
@@ -12,8 +16,14 @@ const char* kDegradeHint =
     " 如需操作软件，只输出一行 JSON，格式："
     "{\"tool\":\"switch_theme\",\"args\":{\"mode\":\"dark\"}}；"
     "可用工具：switch_theme(mode: dark|light)、open_page(page: chat/contacts/notice/"
-    "dynamics/music/editor/settings/about/admin/setting)、window_minimize()、window_center()。"
-    "不需要操作时直接输出普通回复。";
+    "dynamics/music/editor/settings/about/admin/setting)、window_minimize()、window_center()、"
+    "set_font_size(size: small|standard|large)、edit_remark(friend, remark)、"
+    "clear_cache(type: wallpaper|music)、"
+    "set_notify(on?: boolean 查询或开关消息通知)、query_contacts()、query_notices()、"
+    "publish_dynamic(content: 动态文本)。"
+    "JSON 必须严格是 {\"tool\":\"工具名\",\"args\":{...}} 这一种格式，"
+    "输出其它任何 JSON（如 {\"theme\":...}）都不会被执行；不需要操作时直接输出普通回复，"
+    "回复正文里不要出现 JSON。";
 } // namespace
 
 AiMgr::AiMgr() = default;
@@ -31,8 +41,16 @@ void AiMgr::Init(const QString& baseUrl, const QString& model, const QString& ap
 QString AiMgr::systemPrompt() const
 {
     return QStringLiteral(
-        "你是 FoolChat 即时通讯软件的内置 AI 助手。用简洁友好的中文回复；"
-        "用户要求操作软件（主题、页面、窗口）时优先调用提供的工具；不要编造工具执行结果。");
+        "你是 FoolChat 即时通讯软件的内置 AI 助手。回复要求："
+        "1. 简洁友好的中文，先给结论再展开；"
+        "2. 超过三点用无序列表，步骤用有序列表；"
+        "3. 关键词用 **加粗**，代码用带语言标记的 ```代码块，不要用标题和表格；"
+        "4. 操作软件（主题、页面、窗口、字体、备注、缓存）或查询/修改应用数据"
+        "（通讯录好友在线状态、通知公告、消息通知开关、发布动态）时优先调用提供的工具，"
+        "不要编造工具执行结果；"
+        "5. 只如实汇报工具真实返回的结果，禁止虚构未提供的功能或效果"
+        "（例如磨砂、毛玻璃、dark_frosted 等不存在的主题）；主题只有 dark 和 light 两种；"
+        "回复正文里永远不要输出 JSON 或协议格式内容。");
 }
 
 QJsonArray AiMgr::buildTools() const
@@ -76,6 +94,12 @@ QJsonArray AiMgr::buildTools() const
     cacheProp["type"] = "string";
     cacheProp["enum"] = QJsonArray{"wallpaper", "music"};
 
+    QJsonObject onProp;
+    onProp["type"] = "boolean";
+
+    QJsonObject contentProp;
+    contentProp["type"] = "string";
+
     QJsonArray tools;
     tools.append(fn("switch_theme", "切换软件主题（暗黑/亮色）", {{"mode", modeProp}}, {"mode"}));
     tools.append(fn("open_page", "打开软件内的指定页面", {{"page", pageProp}}, {"page"}));
@@ -84,6 +108,10 @@ QJsonArray AiMgr::buildTools() const
     tools.append(fn("set_font_size", "设置全局字体大小", {{"size", sizeProp}}, {"size"}));
     tools.append(fn("edit_remark", "修改好友备注（仅自己可见）", {{"friend", friendProp}, {"remark", remarkProp}}, {"friend", "remark"}));
     tools.append(fn("clear_cache", "清理缓存（壁纸或音乐库）", {{"type", cacheProp}}, {"type"}));
+    tools.append(fn("set_notify", "查询或开关桌面消息通知（不带 on 参数为查询当前状态）", {{"on", onProp}}, {}));
+    tools.append(fn("query_contacts", "查询通讯录好友及在线状态", {}, {}));
+    tools.append(fn("query_notices", "查询通知公告列表", {}, {}));
+    tools.append(fn("publish_dynamic", "发布一条文字动态到动态页", {{"content", contentProp}}, {"content"}));
     return tools;
 }
 
@@ -156,6 +184,9 @@ bool AiMgr::looksLikeCommand(const QString& text)
         QStringLiteral("居中"), QStringLiteral("窗口"), QStringLiteral("页面"),
         QStringLiteral("设置"), QStringLiteral("动态"), QStringLiteral("音乐"),
         QStringLiteral("通讯录"), QStringLiteral("通知"), QStringLiteral("编辑器"),
+        QStringLiteral("在线"), QStringLiteral("发布"), QStringLiteral("开关"),
+        QStringLiteral("备注"), QStringLiteral("字体"), QStringLiteral("字号"),
+        QStringLiteral("缓存"), QStringLiteral("清理"), QStringLiteral("好友"),
         QStringLiteral("dark"), QStringLiteral("light"), QStringLiteral("theme")
     };
     const QString lower = text.toLower();
@@ -409,6 +440,66 @@ QString AiMgr::executeToolCall(const QJsonObject& toolCall)
         }
         emit sig_window_op("clear_cache", type);
         return QStringLiteral("{\"status\":\"ok\"}");
+    }
+    if (name == QLatin1String("set_notify")) {
+        // 通知开关持久化在 ui_settings.ini，通知弹窗每次触发时实时读取 → 保存即生效
+        QSettings settings(QCoreApplication::applicationDirPath() + "/ui_settings.ini",
+                           QSettings::IniFormat);
+        const bool on = args.contains(QLatin1String("on"))
+                            ? args.value(QLatin1String("on")).toBool()
+                            : settings.value("notifyOn", true).toBool();
+        if (args.contains(QLatin1String("on"))) {
+            settings.setValue("notifyOn", on);
+            settings.sync();
+        }
+        return QStringLiteral("{\"status\":\"ok\",\"data\":{\"notifyOn\":%1}}")
+            .arg(on ? "true" : "false");
+    }
+    if (name == QLatin1String("query_contacts")) {
+        QJsonArray friends;
+        int online = 0;
+        for (const auto& f : UserMgr::GetInstance()->GetAllFriends()) {
+            if (f == nullptr) {
+                continue;
+            }
+            QJsonObject item;
+            item["name"] = f->DisplayName();
+            item["online"] = (f->_status == 1);
+            friends.append(item);
+            if (f->_status == 1) {
+                ++online;
+            }
+        }
+        QJsonObject data;
+        data["total"] = static_cast<int>(friends.size());
+        data["online"] = online;
+        data["friends"] = friends;
+        return QString::fromUtf8(
+            QJsonDocument(QJsonObject{{"status", "ok"}, {"data", data}})
+                .toJson(QJsonDocument::Compact));
+    }
+    if (name == QLatin1String("query_notices")) {
+        const QJsonArray notices = UserMgr::GetInstance()->GetNoticeCache();
+        QJsonObject data;
+        data["notices"] = notices;
+        if (notices.isEmpty()) {
+            data["note"] = QStringLiteral("通知列表为空或尚未加载");
+        }
+        return QString::fromUtf8(
+            QJsonDocument(QJsonObject{{"status", "ok"}, {"data", data}})
+                .toJson(QJsonDocument::Compact));
+    }
+    if (name == QLatin1String("publish_dynamic")) {
+        const QString content = args.value(QLatin1String("content")).toString().trimmed();
+        if (content.isEmpty()) {
+            return QStringLiteral("{\"status\":\"error\",\"reason\":\"content is empty\"}");
+        }
+        QJsonObject obj;
+        obj["uid"] = UserMgr::GetInstance()->GetUid();
+        obj["content"] = content;
+        emit TcpMgr::GetInstance()->sig_send_data(ReqId::ID_PUBLISH_DYNAMIC_REQ,
+                                                  QJsonDocument(obj).toJson(QJsonDocument::Compact));
+        return QStringLiteral("{\"status\":\"ok\",\"note\":\"动态已提交发布\"}");
     }
     return QStringLiteral("{\"status\":\"error\",\"reason\":\"unknown tool\"}");
 }

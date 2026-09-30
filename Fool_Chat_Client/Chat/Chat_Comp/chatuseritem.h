@@ -30,6 +30,9 @@ protected:
     // 头像点击跳好友资料页（拦截 icon_lb 的鼠标按下）
     bool eventFilter(QObject* watched, QEvent* event) override;
 private:
+    // 按快照最后一条消息刷新时间列，无聊天记录则隐藏
+    void refreshTimeLabel();
+
     Ui::ChatUseritem *ui;
     std::shared_ptr<UserInfo> _user_info;
 };

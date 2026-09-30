@@ -1,6 +1,7 @@
 #include "c_about.h"
 #include "ui_c_about.h"
 #include "ElaPersonPicture.h"
+#include "themedtext.h"
 
 C_About::C_About(QWidget *parent)
     : ElaDialog(parent)
@@ -14,6 +15,18 @@ C_About::C_About(QWidget *parent)
 
     ui->icon_wid->setPicture(QPixmap(":/res/head_4.jpg"));
     ui->icon_wid->setPictureSize(100);
+
+    // .ui 不再写死颜色，文字与分割线跟随 Ela 主题
+    BindTextToTheme(ui->title_lb);
+    BindMutedTextToTheme(ui->content_lb);
+    BindMutedTextToTheme(ui->footer_lb);
+    auto applyLineColor = [this](ElaThemeType::ThemeMode mode) {
+        const QColor color = eTheme->getThemeColor(mode, ElaThemeType::BasicBorder);
+        ui->line->setStyleSheet(QStringLiteral("color: %1;").arg(color.name()));
+    };
+    applyLineColor(eTheme->getThemeMode());
+    QObject::connect(eTheme, &ElaTheme::themeModeChanged, this, applyLineColor);
+
     ui->content_lb->setText(""
         "版本更新日志 v2.5.0(内容测试)\n"
         "\n"

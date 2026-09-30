@@ -24,7 +24,8 @@ public:
     {
         TextChat = 0, // 新聊天消息 → 打开对应会话
         FriendApply,  // 好友申请 → 通讯录申请页
-        AuthFriend    // 对方通过我的申请 → 打开与新好友的会话
+        AuthFriend,   // 对方通过我的申请 → 打开与新好友的会话
+        IncomingCall  // 视频来电 → 唤起来电弹窗
     };
 
     // parent 须为主窗口（C_Window），用作屏幕定位锚点，析构随主窗口

@@ -14,6 +14,7 @@
 #include <QMediaPlayer>
 #include <QUrl>
 #include <QMenu>
+#include <QTimer>
 
 // Ela组件
 #include "ElaPromotionView.h"
@@ -449,7 +450,8 @@ void MusicPage::adjustTableHeight()
 void MusicPage::showEvent(QShowEvent* event)
 {
     Page_Base::showEvent(event);
-    loadSongsFromDatabase();
+    // 查询挪出 show 事件本身：先完成本帧绘制再刷新列表，避免 IO 卡首帧
+    QTimer::singleShot(0, this, &MusicPage::loadSongsFromDatabase);
 }
 
 void MusicPage::loadSongsFromDatabase()

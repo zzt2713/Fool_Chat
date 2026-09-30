@@ -27,10 +27,7 @@ private:
     QTcpSocket _socket;
     QString _host;
     uint16_t _port;
-    QByteArray _buffer;
-    bool _b_recv_pending;
-    quint16 _message_id;
-    quint16 _message_len;
+    QByteArray _buffer; // 收包重组缓冲（偏移量解析，头+body 齐了才消费）
     QMap<ReqId, std::function<void(ReqId id, int len, QByteArray data)>> _handlers;
     QTimer* _reconnectTimer{nullptr}; // 断线自动重连
     bool _kicked{false};              // 被踢下线后不再重连
@@ -63,6 +60,9 @@ signals:
     void sig_notice_list(QJsonArray notices);       // 通知列表
     void sig_notice_read(int source, int id);       // 通知已读回包
     void sig_friend_list_refreshed(bool ok);        // 好友列表刷新回包（true成功）
+    void sig_set_policy_rsp(int error);             // 加好友策略保存回包（0成功 其他失败）
+    void sig_call_sig_rsp(int error, QString callId);      // 信令回包（error=1013对方不在线）
+    void sig_call_sig_notify(QJsonObject sig);            // 收到转发来的通话信令
 };
 
 #endif // TCPMGR_H

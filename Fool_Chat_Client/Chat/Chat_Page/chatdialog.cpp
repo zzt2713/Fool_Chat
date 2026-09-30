@@ -538,9 +538,14 @@ void ChatDialog::slot_text_chat_msg(std::shared_ptr<TextChatMsg> msg)
 
     //如果没找到，则创建新的插入listwidget
 
-    auto* chat_user_wid = new ChatUseritem();
     //查询好友信息
     auto fi_ptr = UserMgr::GetInstance()->GetFriendById(msg->_from_uid);
+    if (!fi_ptr) {
+        // 非好友消息无法构造会话条目（SetInfo 内部解引用），红点已记账，等好友列表刷新后补建
+        return;
+    }
+
+    auto* chat_user_wid = new ChatUseritem();
     chat_user_wid->SetInfo(fi_ptr);
     QListWidgetItem* item = new QListWidgetItem;
     //qDebug()<<"chat_user_wid sizeHint is " << chat_user_wid->sizeHint();
@@ -855,6 +860,13 @@ void ChatDialog::slot_item_clicked(QListWidgetItem *item)
 
         auto user_info = chat_wid->GetUserInfo();
         if(!user_info){
+            return;
+        }
+
+        // 重复点击同一会话：页面本来就是它，只清未读，
+        // 避免每次点击都全删气泡再从历史全量重放
+        if (_cur_chat_uid == user_info->_uid) {
+            clearUnread(user_info->_uid);
             return;
         }
 

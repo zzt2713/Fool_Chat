@@ -27,14 +27,20 @@
     <number>0</number>
    </property>
    <item>
-    <layout class="QGridLayout" name="gridLayout">
-     <property name="horizontalSpacing">
-      <number>10</number>
+    <layout class="QVBoxLayout" name="verticalLayout_3">
+     <property name="leftMargin">
+      <number>5</number>
      </property>
-     <property name="verticalSpacing">
-      <number>15</number>
+     <property name="topMargin">
+      <number>5</number>
      </property>
-     <item row="0" column="0" colspan="2">
+     <property name="rightMargin">
+      <number>5</number>
+     </property>
+     <property name="bottomMargin">
+      <number>5</number>
+     </property>
+     <item>
       <widget class="ElaLineEdit" name="userEdit">
        <property name="minimumSize">
         <size>
@@ -59,7 +65,7 @@
        </property>
       </widget>
      </item>
-     <item row="1" column="0" colspan="2">
+     <item>
       <widget class="ElaLineEdit" name="emailEdit">
        <property name="minimumSize">
         <size>
@@ -84,17 +90,61 @@
        </property>
       </widget>
      </item>
-     <item row="2" column="1">
-      <widget class="TimerBtn" name="getCode">
+     <item>
+      <layout class="QHBoxLayout" name="horizontalLayout_2">
+       <property name="leftMargin">
+        <number>5</number>
+       </property>
+       <property name="topMargin">
+        <number>5</number>
+       </property>
+       <property name="rightMargin">
+        <number>5</number>
+       </property>
+       <property name="bottomMargin">
+        <number>5</number>
+       </property>
+       <item>
+        <widget class="ElaCaptcha" name="varifyEdit" native="true"/>
+       </item>
+       <item>
+        <widget class="TimerBtn" name="getCode">
+         <property name="minimumSize">
+          <size>
+           <width>80</width>
+           <height>40</height>
+          </size>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>80</width>
+           <height>40</height>
+          </size>
+         </property>
+         <property name="font">
+          <font>
+           <family>Microsoft YaHei</family>
+           <pointsize>10</pointsize>
+          </font>
+         </property>
+         <property name="text">
+          <string>发送验证码</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <widget class="ElaLineEdit" name="newPassEdit">
        <property name="minimumSize">
         <size>
-         <width>80</width>
+         <width>0</width>
          <height>40</height>
         </size>
        </property>
        <property name="maximumSize">
         <size>
-         <width>80</width>
+         <width>16777215</width>
          <height>40</height>
         </size>
        </property>
@@ -104,84 +154,47 @@
          <pointsize>10</pointsize>
         </font>
        </property>
-       <property name="text">
-        <string>发送验证码</string>
+       <property name="echoMode">
+        <enum>QLineEdit::EchoMode::Password</enum>
+       </property>
+       <property name="placeholderText">
+        <string>请输入密码</string>
        </property>
       </widget>
-     </item>
-     <item row="2" column="0">
-      <widget class="ElaCaptcha" name="varifyEdit" native="true"/>
      </item>
     </layout>
    </item>
    <item>
-    <spacer name="verticalSpacer_2">
-     <property name="orientation">
-      <enum>Qt::Orientation::Vertical</enum>
+    <layout class="QVBoxLayout" name="verticalLayout_2">
+     <property name="spacing">
+      <number>20</number>
      </property>
-     <property name="sizeType">
-      <enum>QSizePolicy::Policy::Fixed</enum>
-     </property>
-     <property name="sizeHint" stdset="0">
-      <size>
-       <width>20</width>
-       <height>20</height>
-      </size>
-     </property>
-    </spacer>
-   </item>
-   <item>
-    <widget class="ElaLineEdit" name="newPassEdit">
-     <property name="minimumSize">
-      <size>
-       <width>0</width>
-       <height>40</height>
-      </size>
-     </property>
-     <property name="maximumSize">
-      <size>
-       <width>16777215</width>
-       <height>40</height>
-      </size>
-     </property>
-     <property name="font">
-      <font>
-       <family>Microsoft YaHei</family>
-       <pointsize>10</pointsize>
-      </font>
-     </property>
-     <property name="echoMode">
-      <enum>QLineEdit::EchoMode::Password</enum>
-     </property>
-     <property name="placeholderText">
-      <string>请输入密码</string>
-     </property>
-    </widget>
-   </item>
-   <item>
-    <widget class="QLabel" name="errTip">
-     <property name="minimumSize">
-      <size>
-       <width>0</width>
-       <height>15</height>
-      </size>
-     </property>
-     <property name="maximumSize">
-      <size>
-       <width>16777215</width>
-       <height>15</height>
-      </size>
-     </property>
-     <property name="styleSheet">
-      <string notr="true">font-size: 12px;</string>
-     </property>
-     <property name="text">
-      <string/>
-     </property>
-     <property name="alignment">
-      <set>Qt::AlignmentFlag::AlignCenter</set>
-     </property>
-    </widget>
+     <item>
+      <widget class="QLabel" name="errTip">
+       <property name="minimumSize">
+        <size>
+         <width>0</width>
+         <height>15</height>
+        </size>
+       </property>
+       <property name="maximumSize">
+        <size>
+         <width>16777215</width>
+         <height>15</height>
+        </size>
+       </property>
+       <property name="styleSheet">
+        <string notr="true">font-size: 12px;</string>
+       </property>
+       <property name="text">
+        <string/>
+       </property>
+       <property name="alignment">
+        <set>Qt::AlignmentFlag::AlignCenter</set>
+       </property>
+      </widget>
+     </item>
+    </layout>
    </item>
    <item>
     <layout class="QHBoxLayout" name="buttonLayout">
@@ -291,22 +304,6 @@
      </item>
     </layout>
    </item>
-   <item>
-    <spacer name="verticalSpacer">
-     <property name="orientation">
-      <enum>Qt::Orientation::Vertical</enum>
-     </property>
-     <property name="sizeType">
-      <enum>QSizePolicy::Policy::Fixed</enum>
-     </property>
-     <property name="sizeHint" stdset="0">
-      <size>
-       <width>20</width>
-       <height>40</height>
-      </size>
-     </property>
-    </spacer>
-   </item>
   </layout>
  </widget>
  <customwidgets>
@@ -328,9 +325,6 @@
   </customwidget>
  </customwidgets>
  <tabstops>
-  <tabstop>userEdit</tabstop>
-  <tabstop>emailEdit</tabstop>
-  <tabstop>getCode</tabstop>
   <tabstop>sure_btn</tabstop>
   <tabstop>return_btn</tabstop>
  </tabstops>

@@ -67,8 +67,8 @@ private:
     void initTray();                     // 托盘图标 + 菜单
     void updateTrayBadge();              // 未读角标重绘
     void refreshApplyBadge();            // 申请角标按未处理数重算
-    // 是否允许弹右下角通知：主窗口非前台（最小化/失焦）才提示
-    bool shouldPopupNotice() const;
+    // 是否允许弹右下角通知：普通消息仅最小化时弹；requireMinimized=false（来电）非前台即弹
+    bool shouldPopupNotice(bool requireMinimized) const;
 
     NotifyPopup* _notifyPopup{nullptr};  // 右下角消息通知弹窗控制器
 

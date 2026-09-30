@@ -13,34 +13,6 @@
   <property name="windowTitle">
    <string>关于软件</string>
   </property>
-  <property name="styleSheet">
-   <string notr="true">
-QDialog{
-    background-color:#f6f7fb;
-}
-
-
-/* 标题 */
-#title_lb{
-    color:#2d2d2d;
-}
-
-/* 内容 */
-#content_lb{
-    color:#6b6b6b;
-}
-
-/* 版权 */
-#footer_lb{
-    color:#9a9a9a;
-}
-
-/* 分割线 */
-#line{
-    color:#ececec;
-}
-   </string>
-  </property>
   <layout class="QVBoxLayout" name="verticalLayout">
    <property name="spacing">
     <number>0</number>

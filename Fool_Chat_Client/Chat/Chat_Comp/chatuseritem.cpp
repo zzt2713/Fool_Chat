@@ -6,11 +6,26 @@
 #include "pixmaputil.h"
 #include <QPixmap>
 #include <QFontMetrics>
+#include <QDateTime>
 
 // 超宽文本省略号截断（完整文本由调用方放悬停提示）
 static QString elidedForItem(const QString& text, const QFont& font, int width)
 {
     return QFontMetrics(font).elidedText(text, Qt::ElideRight, width);
+}
+
+// 会话行时间：今天 HH:mm / 昨天 / 更早 MM-dd
+static QString formatMsgTime(qint64 msecs)
+{
+    const QDateTime dt = QDateTime::fromMSecsSinceEpoch(msecs);
+    const QDateTime now = QDateTime::currentDateTime();
+    if (dt.date() == now.date()) {
+        return dt.toString("HH:mm");
+    }
+    if (dt.date().addDays(1) == now.date()) {
+        return QStringLiteral("昨天");
+    }
+    return dt.toString("MM-dd");
 }
 
 // 沿父链找到聊天页（置顶/清记录是列表层的动作）
@@ -40,6 +55,8 @@ ChatUseritem::ChatUseritem(QWidget *parent)
     BindMutedTextToTheme(ui->user_chat_lib);
     ui->red_dot_lb->setVisible(false);
     ui->icon_lb->installEventFilter(this);
+    // .ui 里的时间占位文案在拿到真实消息前不显示
+    refreshTimeLabel();
 
     // 消息页右键菜单：置顶/取消置顶 + 删除聊天记录（AI 的 uid=-1 不出菜单）
     setContextMenuPolicy(Qt::CustomContextMenu);
@@ -113,6 +130,7 @@ void ChatUseritem::SetInfo(QString name, QString head, QString msg)
 
     ui->user_name->setText(_user_info->_name);
     ui->user_chat_lib->setText(_user_info->_last_msg);
+    refreshTimeLabel();
 }
 
 void ChatUseritem::SetInfo(std::shared_ptr<FriendInfo> friend_info)
@@ -131,6 +149,7 @@ void ChatUseritem::SetInfo(std::shared_ptr<FriendInfo> friend_info)
     ui->user_name->setToolTip(_user_info->DisplayName());
     ui->user_chat_lib->setText(elidedForItem(_user_info->_last_msg, ui->user_chat_lib->font(), 200));
     ui->user_chat_lib->setToolTip(_user_info->_last_msg);
+    refreshTimeLabel();
 }
 
 QString ChatUseritem::getName()
@@ -154,6 +173,7 @@ void ChatUseritem::SetInfo(std::shared_ptr<UserInfo> user_info)
     ui->user_name->setToolTip(_user_info->DisplayName());
     ui->user_chat_lib->setText(elidedForItem(_user_info->_last_msg, ui->user_chat_lib->font(), 200));
     ui->user_chat_lib->setToolTip(_user_info->_last_msg);
+    refreshTimeLabel();
 }
 
 std::shared_ptr<UserInfo> ChatUseritem::GetUserInfo()
@@ -172,6 +192,18 @@ void ChatUseritem::updateLastMsg(std::vector<std::shared_ptr<TextChatData>> msgs
     _user_info->_last_msg = last_msg;
     ui->user_chat_lib->setText(elidedForItem(_user_info->_last_msg, ui->user_chat_lib->font(), 200));
     ui->user_chat_lib->setToolTip(_user_info->_last_msg);
+    refreshTimeLabel();
+}
+
+void ChatUseritem::refreshTimeLabel()
+{
+    if (!_user_info || _user_info->_chat_msgs.empty()) {
+        ui->time_lb->clear();
+        ui->time_lb->setVisible(false);
+        return;
+    }
+    ui->time_lb->setText(formatMsgTime(_user_info->_chat_msgs.back()->_time));
+    ui->time_lb->setVisible(true);
 }
 
 void ChatUseritem::SetUnread(int count)

@@ -4,14 +4,14 @@
 #include <QEvent>
 
 namespace {
-// （卡片的封面/正文均为定高或已按宽度截断，此值与实际占位一致）
-int contentHeightAt(QWidget *widget, int width)
-{
-    if (widget && widget->layout()) {
-        return widget->layout()->totalHeightForWidth(width);
+    // （卡片的封面/正文均为定高或已按宽度截断，此值与实际占位一致）
+    int contentHeightAt(QWidget *widget, int width)
+    {
+        if (widget && widget->layout()) {
+            return widget->layout()->totalHeightForWidth(width);
+        }
+        return widget ? widget->sizeHint().height() : 0;
     }
-    return widget ? widget->sizeHint().height() : 0;
-}
 } // namespace
 
 MasonryFlow::MasonryFlow(QWidget *parent)

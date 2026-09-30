@@ -17,25 +17,25 @@ ContactDialog::ContactDialog(QWidget *parent)
     setWindowTitle("联系人");
     // ElaScrollPage 自带内部布局，页面 UI 挂到滚动区内容上
     auto* content = new QWidget();
+    content->setWindowTitle("联系人");
     this->setTitleVisible(false);
     ui->setupUi(content);
     // ElaText 颜色绑定主题（自带样式表不吃 palette 更新）
-    ui->label->setTextStyle(ElaTextType::Body);
-    BindTextToTheme(ui->label);
     addCentralWidget(content);
-    // 标题行右侧加刷新按钮：重新拉取服务端好友/申请列表
+    // 搜索框右侧加刷新按钮：重新拉取服务端好友/申请列表
     auto* refresh_btn = new ElaToolButton(this);
     refresh_btn->setIsTransparent(true);
     refresh_btn->setElaIcon(ElaIconType::ArrowsRotate);
     refresh_btn->setToolTip("刷新通讯录");
     refresh_btn->setFixedSize(36, 36);
+    auto* search_item = ui->verticalLayout_2->takeAt(0);
+    delete search_item;
     auto* header_row = new QHBoxLayout();
     header_row->setContentsMargins(0, 0, 0, 0);
-    ui->verticalLayout_2->removeWidget(ui->label);
-    header_row->addWidget(ui->label);
-    header_row->addStretch();
+    header_row->setSpacing(8);
+    header_row->addWidget(ui->search_edit, 1);
     header_row->addWidget(refresh_btn);
-    ui->verticalLayout_2->insertLayout(0, header_row);
+    ui->verticalLayout_2->addLayout(header_row);
     connect(refresh_btn, &ElaToolButton::clicked, this, [this]() {
         emit TcpMgr::GetInstance()->sig_send_data(ReqId::ID_GET_FRIEND_LIST_REQ, QByteArray("{}"));
     });
@@ -198,6 +198,10 @@ void ContactDialog::loadMoreConUser()
     auto friend_list = UserMgr::GetInstance()->GetConListPerPage();
     if(friend_list.empty() == false){
         for(auto& friend_ele : friend_list){
+            // 好友刷新可能把已展示的好友合并到游标之后的索引，按 uid 去重兜底
+            if (ui->con_user_list->hasItemForUid(friend_ele->_uid)) {
+                continue;
+            }
             auto* chat_user_wid = new ConUserItem();
             chat_user_wid->SetInfo(friend_ele);
             QListWidgetItem* item = new QListWidgetItem;
@@ -205,8 +209,8 @@ void ContactDialog::loadMoreConUser()
             ui->con_user_list->addItem(item);
             ui->con_user_list->setItemWidget(item,chat_user_wid);
         }
-        // 更新已加载条目
-        UserMgr::GetInstance()->UpdateChatLoadedCount();
+        // 更新已加载条目（通讯录游标；推进 chat 游标会导致本页反复拉取同一批好友）
+        UserMgr::GetInstance()->UpdateContactLoadedCount();
     }
 }
 

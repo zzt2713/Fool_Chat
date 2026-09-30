@@ -1,6 +1,28 @@
 #include "ranimg.h"
 #include <QPainter>
 
+namespace {
+// 图床地址：pc 电脑壁纸 / pp 头像 / pe 移动壁纸，其余按 pc 处理
+QUrl ImageUrlFor(const QString& type)
+{
+    if (type == "pp") {
+        return QUrl("https://www.loliapi.com/acg/pp/");
+    }
+    if (type == "pe") {
+        return QUrl("https://www.loliapi.com/acg/pe/");
+    }
+    return QUrl("https://www.loliapi.com/acg/pc/");
+}
+
+void FillImageRequest(QNetworkRequest& request, const QUrl& url)
+{
+    request.setUrl(url);
+    request.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0");
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
+}
+} // namespace
+
 ranImg *ranImg::instance()
 {
     static ranImg _instance;
@@ -16,43 +38,86 @@ QByteArray ranImg::fetchImageData(const QString& type)
 {
     QNetworkAccessManager* manager = new QNetworkAccessManager();
     QNetworkRequest request;
+    FillImageRequest(request, ImageUrlFor(type));
 
-    if(type == "pc")
-        request.setUrl(QUrl("https://www.loliapi.com/acg/pc/"));
-    else if(type == "pp")
-        request.setUrl(QUrl("https://www.loliapi.com/acg/pp/"));
-    else
-        request.setUrl(QUrl("https://www.loliapi.com/acg/pe/"));
-
-    request.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0");
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                         QNetworkRequest::NoLessSafeRedirectPolicy);
-
-    QNetworkReply* reply = manager->get(request);
-
-    QEventLoop loop;
-    QTimer timeoutTimer;
-
-    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-    QObject::connect(&timeoutTimer, &QTimer::timeout, &loop, &QEventLoop::quit);
-
-    timeoutTimer.setSingleShot(true);
-    timeoutTimer.start(5000);
-
-    loop.exec();
-
+    // 图床偶发超时/限流：失败自动重试一次
     QByteArray imageData;
+    for (int attempt = 0; attempt < 2 && imageData.isEmpty(); ++attempt) {
+        QNetworkReply* reply = manager->get(request);
 
-    if (reply->error() == QNetworkReply::NoError && timeoutTimer.isActive()) {
-        imageData = reply->readAll();
-    } else {
-        qWarning() << "Network error or timeout:" << reply->errorString();
+        QEventLoop loop;
+        QTimer timeoutTimer;
+
+        QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+        QObject::connect(&timeoutTimer, &QTimer::timeout, &loop, &QEventLoop::quit);
+
+        timeoutTimer.setSingleShot(true);
+        timeoutTimer.start(5000);
+
+        loop.exec();
+
+        if (reply->error() == QNetworkReply::NoError && timeoutTimer.isActive()) {
+            imageData = reply->readAll();
+        } else {
+            qWarning() << "Network error or timeout:" << reply->errorString();
+        }
+
+        reply->deleteLater();
     }
 
-    reply->deleteLater();
     manager->deleteLater();
 
     return imageData;
+}
+
+QPixmap ranImg::getImgOrNull(const QString& type)
+{
+    const QByteArray imageData = fetchImageData(type);
+    if (imageData.isEmpty()) {
+        return QPixmap();
+    }
+    QPixmap pixmap;
+    if (!pixmap.loadFromData(imageData)) {
+        return QPixmap();
+    }
+    return pixmap;
+}
+
+void ranImg::getImgOrNullAsync(const QString& type,
+                               const std::function<void(QPixmap)>& cb,
+                               int retriesLeft)
+{
+    QNetworkRequest request;
+    FillImageRequest(request, ImageUrlFor(type));
+    // 网络层超时兜底，不再依赖嵌套事件循环计时
+    request.setTransferTimeout(8000);
+
+    QNetworkReply* reply = _manager.get(request);
+    // reply 作接收者：请求对象销毁时连接自动断开，回调内不触碰单例生命周期
+    QObject::connect(reply, &QNetworkReply::finished, reply,
+                     [this, reply, cb, retriesLeft, type]() {
+        const bool ok = (reply->error() == QNetworkReply::NoError);
+        const QString errStr = reply->errorString();
+        QByteArray data = ok ? reply->readAll() : QByteArray();
+        reply->deleteLater();
+
+        if (!ok) {
+            qWarning() << "Async image fetch failed, retry left "
+                       << retriesLeft - 1 << ":" << errStr;
+            if (retriesLeft > 0) {
+                getImgOrNullAsync(type, cb, retriesLeft - 1);
+                return;
+            }
+            cb(QPixmap());
+            return;
+        }
+
+        QPixmap pixmap;
+        if (!pixmap.loadFromData(data)) {
+            pixmap = QPixmap();
+        }
+        cb(pixmap);
+    });
 }
 
 QPixmap ranImg::getImg(QString type)

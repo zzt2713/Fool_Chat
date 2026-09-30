@@ -81,10 +81,31 @@ enum ReqId {
     ID_SET_ADD_POLICY_RSP = 1043, //设置加好友策略回复
     ID_GET_FRIEND_LIST_REQ = 1044, //获取好友列表请求
     ID_GET_FRIEND_LIST_RSP = 1045, //获取好友列表回包
+    ID_CALL_SIG_REQ = 1046,        //通话信令请求（invite/accept/reject/offer/answer/ice/hangup）
+    ID_CALL_SIG_RSP = 1047,        //通话信令回包
+    ID_NOTIFY_CALL_SIG_REQ = 1048, //转发来的通话信令
 };
 
 // 服务端错误码补充（与 ChatServer ErrorCodes 对齐）
 const int SERVER_ERR_ADD_REFUSED = 1012; // 对方拒绝添加
+const int SERVER_ERR_PEER_OFFLINE = 1013; // 通话/消息目标用户不在线
+
+// 通话信令类型（call_id 相同的信令属于同一次通话）
+namespace CallSig {
+inline const QString INVITE = "invite";     // 主叫发起呼叫
+inline const QString ACCEPT = "accept";     // 被叫接听
+inline const QString REJECT = "reject";     // 被叫拒接
+inline const QString OFFER = "offer";       // 主叫 SDP offer
+inline const QString ANSWER = "answer";     // 被叫 SDP answer
+inline const QString ICE = "ice";           // ICE 候选
+inline const QString HANGUP = "hangup";     // 任一方挂断
+}
+
+// 通话媒体类型：放在 invite 的 payload 里由服务端透传，两端自行解释
+namespace CallType {
+inline const QString VIDEO = "video";
+inline const QString VOICE = "voice";
+}
 
 enum Modules{
     REGISTERMOD = 0,

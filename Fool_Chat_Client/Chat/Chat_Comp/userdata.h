@@ -2,6 +2,7 @@
 #define USERDATA_H
 #include <QString>
 #include <QMetaType>
+#include <QDateTime>
 #include <vector>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -170,14 +171,17 @@ struct UserInfo {
 };
 
 struct TextChatData{
-    TextChatData(QString msg_id, QString msg_content, int fromuid, int touid)
-        :_msg_id(msg_id),_msg_content(msg_content),_from_uid(fromuid),_to_uid(touid){
+    TextChatData(QString msg_id, QString msg_content, int fromuid, int touid,
+                 qint64 time = -1)
+        :_msg_id(msg_id),_msg_content(msg_content),_from_uid(fromuid),_to_uid(touid),
+         _time(time >= 0 ? time : QDateTime::currentMSecsSinceEpoch()){
 
     }
     QString _msg_id;
     QString _msg_content;
     int _from_uid;
     int _to_uid;
+    qint64 _time; // 消息时间（毫秒时间戳）：协议带 time 字段时为服务端时间，否则为客户端收到时间
 };
 
 struct TextChatMsg{
@@ -187,7 +191,10 @@ struct TextChatMsg{
             auto msg_obj = msg_data.toObject();
             auto content = msg_obj["content"].toString();
             auto msgid = msg_obj["msgid"].toString();
-            auto msg_ptr = std::make_shared<TextChatData>(msgid, content,fromuid, touid);
+            const qint64 time = msg_obj.contains("time")
+                                     ? static_cast<qint64>(msg_obj["time"].toDouble())
+                                     : -1;
+            auto msg_ptr = std::make_shared<TextChatData>(msgid, content,fromuid, touid, time);
             _chat_msgs.push_back(msg_ptr);
         }
     }

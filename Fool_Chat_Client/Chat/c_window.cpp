@@ -102,7 +102,7 @@ C_Window::C_Window(QWidget *parent):ElaWindow(parent),_contactMsg(0)
     connect(TcpMgr::GetInstance().get(), &TcpMgr::sig_delete_friend_notify,
             this, &C_Window::slot_delete_friend_notify);
 
-    // ===== 右下角消息通知弹窗：仅主窗口非前台时提示 =====
+    // ===== 右下角消息通知弹窗：普通消息仅最小化时提示，来电非前台即提示 =====
     _notifyPopup = new NotifyPopup(this);
     connect(_notifyPopup, &NotifyPopup::sigNoticeClicked,
             this, &C_Window::slot_notice_clicked);
@@ -118,7 +118,7 @@ C_Window::C_Window(QWidget *parent):ElaWindow(parent),_contactMsg(0)
     connect(CallManager::GetInstance().get(), &CallManager::sig_incoming_call,
             this, [this](int fromuid, QString callId) {
                 Q_UNUSED(callId);
-                if (!shouldPopupNotice()) {
+                if (!shouldPopupNotice(false)) {
                     return;
                 }
                 auto fi = UserMgr::GetInstance()->GetFriendById(fromuid);
@@ -378,7 +378,8 @@ void C_Window::initNav()
         }
     });
     addFooterNode("关于", nullptr,aboutKey, 0, ElaIconType::User);
-    _aboutPage = new C_About();
+    // 挂父对象：C_Window 每次登录/登出重建，无父会随每次循环泄漏一个对话框
+    _aboutPage = new C_About(this);
 
     _aboutPage->hide();
     connect(this, &ElaWindow::navigationNodeClicked, this, [=](ElaNavigationType::NavigationNodeType nodeType, QString nodeKey) {
@@ -482,8 +483,8 @@ void C_Window::slot_apply_friend(std::shared_ptr<AddFriendApply> apply)
     ADDMSG(ElaMessageBarType::Top,"您有新的好友申请！",this,2);
     emit SigContactApply(apply);
 
-    // 窗口内提示由上方 ADDMSG 负责，非前台时右下角补一张卡片
-    if (shouldPopupNotice()) {
+    // 窗口内提示由上方 ADDMSG 负责，最小化时右下角补一张卡片
+    if (shouldPopupNotice(true)) {
         const QString title = apply->_nick.isEmpty() ? apply->_name : apply->_nick;
         const QString body = apply->_desc.isEmpty()
                                  ? QStringLiteral("请求添加你为好友")
@@ -611,7 +612,7 @@ void C_Window::slot_delete_friend_notify(int fromuid)
     ADDMSG(ElaMessageBarType::Top, QString("你与 %1 已不是好友").arg(name), this, 2, 3000);
 }
 
-bool C_Window::shouldPopupNotice() const
+bool C_Window::shouldPopupNotice(bool requireMinimized) const
 {
     // 设置页"消息通知"总开关（默认开），关掉则右下角一律不弹
     QSettings uiSettings(QCoreApplication::applicationDirPath() + "/ui_settings.ini",
@@ -623,6 +624,11 @@ bool C_Window::shouldPopupNotice() const
     if (isMinimized()) {
         return true;
     }
+    // 普通消息：只有最小化才弹，前台/失焦在屏一律不弹
+    if (requireMinimized) {
+        return false;
+    }
+    // 来电：非前台（焦点在其它应用）也弹
     // activeWindow() 只返回本应用的活动窗口：null = 焦点在其它应用 → 该弹
     QWidget* active = QApplication::activeWindow();
     if (active == nullptr) {
@@ -646,12 +652,7 @@ void C_Window::slot_popup_text_chat_msg(std::shared_ptr<TextChatMsg> msg)
     if (msg->_from_uid == UserMgr::GetInstance()->GetUid()) {
         return;
     }
-    if (!shouldPopupNotice()) {
-        return;
-    }
-    // 窗口在屏且正打开发信人会话 → 消息已直接可见，不弹
-    if (!isMinimized() && isVisible() && _chatDialog->isVisible()
-        && _chatDialog->currentChatUid() == msg->_from_uid) {
+    if (!shouldPopupNotice(true)) {
         return;
     }
     auto fi = UserMgr::GetInstance()->GetFriendById(msg->_from_uid);
@@ -663,7 +664,7 @@ void C_Window::slot_popup_text_chat_msg(std::shared_ptr<TextChatMsg> msg)
 
 void C_Window::slot_popup_add_auth_friend(std::shared_ptr<AuthInfo> auth)
 {
-    if (!auth || !shouldPopupNotice()) {
+    if (!auth || !shouldPopupNotice(true)) {
         return;
     }
     const QString title = auth->_nick.isEmpty() ? auth->_name : auth->_nick;

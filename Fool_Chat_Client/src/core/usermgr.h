@@ -59,6 +59,9 @@ public:
     // 加好友策略：0拒绝 1需验证 2允许（登录时由服务端带回）
     void SetAddPolicy(int policy);
     int GetAddPolicy() const;
+    // 通知公告缓存（NoticePage 拉取后写入，AI query_notices 读）
+    void SetNoticeCache(const QJsonArray& notices) { _noticeCache = notices; }
+    QJsonArray GetNoticeCache() const { return _noticeCache; }
 
 private:
     QString _token;
@@ -68,6 +71,7 @@ private:
     QMap<int, std::shared_ptr<FriendInfo>> _friend_map;
     std::vector<std::shared_ptr<FriendInfo>> _friend_list;
     QSet<int> _pinned_uids; // 消息页置顶好友（内存态）
+    QJsonArray _noticeCache; // 最近一次拉取的通知公告
 
 
     int _chat_loaded;

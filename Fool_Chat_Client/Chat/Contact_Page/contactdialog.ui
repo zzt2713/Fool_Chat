@@ -63,29 +63,6 @@
           <number>0</number>
          </property>
          <item>
-          <widget class="ElaText" name="label">
-           <property name="text">
-            <string>通讯录</string>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <spacer name="verticalSpacer">
-           <property name="orientation">
-            <enum>Qt::Orientation::Vertical</enum>
-           </property>
-           <property name="sizeType">
-            <enum>QSizePolicy::Policy::Fixed</enum>
-           </property>
-           <property name="sizeHint" stdset="0">
-            <size>
-             <width>10</width>
-             <height>15</height>
-            </size>
-           </property>
-          </spacer>
-         </item>
-         <item>
           <widget class="C_SearchEdit" name="search_edit"/>
          </item>
         </layout>
@@ -133,11 +110,6 @@
   </layout>
  </widget>
  <customwidgets>
-  <customwidget>
-   <class>ElaText</class>
-   <extends>QLabel</extends>
-   <header location="global">ElaText.h</header>
-  </customwidget>
   <customwidget>
    <class>C_SearchEdit</class>
    <extends>QLineEdit</extends>

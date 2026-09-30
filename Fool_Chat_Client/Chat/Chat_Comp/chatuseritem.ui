@@ -167,7 +167,7 @@
       <item alignment="Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignVCenter">
        <widget class="ElaText" name="time_lb">
         <property name="text">
-         <string>13：15</string>
+         <string/>
         </property>
        </widget>
       </item>

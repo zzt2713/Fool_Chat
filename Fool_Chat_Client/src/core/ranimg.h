@@ -25,6 +25,7 @@
 #include <QSize>
 #include <QObject>
 #include <QDebug>
+#include <functional>
 
 #define IMG(str) ranImg::instance()->getImg(str)
 #define IMG_SIZE(w,h) ranImg::instance()->getImg(w,h)
@@ -41,6 +42,13 @@ public:
     QPixmap getImg(QString type = "pc"); // pc为pc端图片 pe为移动端图片 pp 头像 默认获取pc端图片
     QPixmap getImg(int width, int height);
     QPixmap getImg(QSize size);
+    // 获取失败返回空图（不给占位图），壁纸等场景由调用方决定兜底
+    QPixmap getImgOrNull(const QString& type);
+
+    // 异步版：不阻塞调用线程，回调在主线程执行，失败/超时回调空图（自动重试一次）
+    void getImgOrNullAsync(const QString& type,
+                           const std::function<void(QPixmap)>& cb,
+                           int retriesLeft = 1);
 
     // 返回QImage的方法
     QImage getImage(QString type = "pc");
@@ -54,6 +62,8 @@ private:
     QByteArray fetchImageData(const QString& type);
     QPixmap createDefaultPixmap();
     QImage createDefaultImage();
+
+    QNetworkAccessManager _manager; // 异步请求复用（单例生命周期）
 };
 
 #endif // RANIMG_H

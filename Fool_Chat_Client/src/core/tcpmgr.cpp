@@ -3,6 +3,7 @@
 #include <QTimer>
 #include <QJsonDocument>
 #include <QByteArray>
+#include <limits>
 #include "Logger.h"
 #include "usermgr.h"
 #include "../Chat/Chat_Comp/userdata.h"
@@ -13,42 +14,42 @@ TcpMgr::~TcpMgr()
 
 }
 
-TcpMgr::TcpMgr():_host(""),_port(0),_b_recv_pending(false),_message_id(0),_message_len(0) {
+TcpMgr::TcpMgr():_host(""),_port(0) {
     QObject::connect(&_socket,&QTcpSocket::connected,[&](){
         // 成功建立连接（重连成功同样走登录重发链路）
+        // 丢弃上一条连接残留的半帧，否则会与新连接首帧拼接破坏帧同步
+        _buffer.clear();
         _reconnectDelay = 3000;
         emit sig_con_success(true);
         emit sig_link_state(true);
     });
     QObject::connect(&_socket, &QTcpSocket::readyRead, [&]() {
         _buffer.append(_socket.readAll());
-        QDataStream stream(&_buffer, QIODevice::ReadOnly);
-        stream.setVersion(QDataStream::Qt_6_0);
+        // 偏移量解析：凑齐 4 字节头再等 body，头部+body 都完整才消费，
+        // 粘包（多消息同段）与拆包（消息跨段）都正确。
+        // 旧实现用 QDataStream 读头后 mid() 重赋值 _buffer，粘包时流位置错位，
+        // 会永久卡在 pending 等不存在的长度，之后所有入站消息静默丢失。
         forever {
-            if(!_b_recv_pending){
-                if (_buffer.size() < static_cast<int>(sizeof(quint16) * 2)) {
-                    return;
-                }
-                stream >> _message_id >> _message_len;
-                _buffer = _buffer.mid(sizeof(quint16) * 2);
-            }
-            if(_buffer.size() < _message_len){
-                _b_recv_pending = true;
+            if (_buffer.size() < static_cast<int>(sizeof(quint16) * 2)) {
                 return;
             }
-            _b_recv_pending = false;
-            // 读取消息体
-            QByteArray messageBody = _buffer.mid(0, _message_len);
-            _buffer = _buffer.mid(_message_len);
-            handleMsg(ReqId(_message_id),_message_len, messageBody);
+            const auto* p = reinterpret_cast<const uchar*>(_buffer.constData());
+            const quint16 msgId = static_cast<quint16>((p[0] << 8) | p[1]);
+            const quint16 msgLen = static_cast<quint16>((p[2] << 8) | p[3]);
+            if (_buffer.size() < static_cast<int>(sizeof(quint16) * 2 + msgLen)) {
+                return; // 头或 body 未收齐，buffer 原样保留等下次 readyRead
+            }
+            const QByteArray messageBody = _buffer.mid(sizeof(quint16) * 2, msgLen);
+            _buffer.remove(0, static_cast<int>(sizeof(quint16) * 2) + msgLen);
+            handleMsg(ReqId(msgId), msgLen, messageBody);
         }
     });
 
     QObject::connect(&_socket, &QTcpSocket::errorOccurred,
-        [&](QAbstractSocket::SocketError socketError) {
-        Q_UNUSED(socketError);
-        LOG_ERROR("TCP socket error: " + _socket.errorString().toStdString());
-    });
+                     [&](QAbstractSocket::SocketError socketError) {
+                         Q_UNUSED(socketError);
+                         LOG_ERROR("TCP socket error: " + _socket.errorString().toStdString());
+                     });
 
     QObject::connect(&_socket,&QTcpSocket::disconnected,[&](){
         emit sig_link_state(false);
@@ -99,6 +100,7 @@ void TcpMgr::initHandlers()
         auto icon = jsonObj["icon"].toString();
         auto sex = jsonObj["sex"].toInt();
         auto user_info = std::make_shared<UserInfo>(uid,name,nick,icon,sex);
+        user_info->_desc = jsonObj["desc"].toString();
 
         UserMgr::GetInstance()->SetUserInfo(user_info);
         UserMgr::GetInstance()->SetToken(jsonObj["token"].toString());
@@ -138,9 +140,9 @@ void TcpMgr::initHandlers()
         }
 
         auto search_info = std::make_shared<SearchInfo>(jsonObj["uid"].toInt(),
-            jsonObj["name"].toString(),jsonObj["nick"].toString(),
-            jsonObj["desc"].toString(),jsonObj["sex"].toInt(),jsonObj["icon"].toString()
-        );
+                                                        jsonObj["name"].toString(),jsonObj["nick"].toString(),
+                                                        jsonObj["desc"].toString(),jsonObj["sex"].toInt(),jsonObj["icon"].toString()
+                                                        );
         emit sig_user_search(search_info);
     });
 
@@ -477,6 +479,34 @@ void TcpMgr::initHandlers()
         }
         emit sig_friend_list_refreshed(true);
     });
+    // 加好友策略保存回包：成功静默，失败由 UI 提示
+    _handlers.insert(ID_SET_ADD_POLICY_RSP,[this](ReqId id, int len, QByteArray data){
+        Q_UNUSED(len);
+        QJsonDocument jsonDoc = QJsonDocument::fromJson(data);
+        if(jsonDoc.isNull() || !jsonDoc.isObject()){
+            return;
+        }
+        emit sig_set_policy_rsp(jsonDoc.object()["error"].toInt());
+    });
+    // 通话信令回包：error=1013 表示对方不在线
+    _handlers.insert(ID_CALL_SIG_RSP,[this](ReqId id, int len, QByteArray data){
+        Q_UNUSED(len);
+        QJsonDocument jsonDoc = QJsonDocument::fromJson(data);
+        if(jsonDoc.isNull() || !jsonDoc.isObject()){
+            return;
+        }
+        QJsonObject jsonObj = jsonDoc.object();
+        emit sig_call_sig_rsp(jsonObj["error"].toInt(), jsonObj["call_id"].toString());
+    });
+    // 转发来的通话信令：原样透传给 CallManager 处理
+    _handlers.insert(ID_NOTIFY_CALL_SIG_REQ,[this](ReqId id, int len, QByteArray data){
+        Q_UNUSED(len);
+        QJsonDocument jsonDoc = QJsonDocument::fromJson(data);
+        if(jsonDoc.isNull() || !jsonDoc.isObject()){
+            return;
+        }
+        emit sig_call_sig_notify(jsonDoc.object());
+    });
 }
 
 void TcpMgr::handleMsg(ReqId id, int len, QByteArray data)
@@ -509,6 +539,14 @@ void TcpMgr::slot_tcp_connect(ServerInfo si)
 void TcpMgr::slot_send_data(ReqId reqId, QByteArray dataBytes)
 {
     uint16_t id = reqId;
+
+    // 长度字段只有 16 位，超长载荷若照发会导致声明长度与实际字节数不符，
+    // 对端按声明长度截取后剩余字节被当作下一帧头，帧同步永久错位
+    if (dataBytes.length() > static_cast<int>(std::numeric_limits<quint16>::max())) {
+        LOG_ERROR("payload too large, msg_id=" + std::to_string(id) +
+                  ", size=" + std::to_string(dataBytes.length()));
+        return;
+    }
 
     // 计算长度（使用网络字节序转换）
     quint16 len = static_cast<quint16>(dataBytes.length());
