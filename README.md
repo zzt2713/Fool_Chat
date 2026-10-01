@@ -7,11 +7,11 @@ FoolChat 是一套完整的分布式即时通讯系统项目集合：C++ 服务�
 | 项目 | 说明 |
 |------|------|
 | [GateServer](./GateServer/) | HTTP 网关（Boost.Beast，:8080）。接收客户端的注册 / 登录 / 重置密码 / 验证码请求，校验 MySQL 后联动 StatusServer 完成登录，下发 uid、token 与 ChatServer 地址 |
-| [VarifyServer](./VarifyServer/) | Node.js gRPC 验证码服务（:50051）。生成邮箱验证码，经 SMTP 发送，并写入 Redis（600 秒有效） |
+| [VarifyServer](./VarifyServer/) | Node.js gRPC 验证码服务（:50051）。生成邮箱验证码，经 SMTP 发送，并写入 Redis |
 | [StatusServer](./StatusServer/) | gRPC 状态服务（:50052）。按 Redis 在线人数为登录用户分配负载最低的 ChatServer，并签发登录 token |
 | [ChatServer](./ChatServer/) | TCP 实时消息服务实例 1（TCP :8090 / gRPC :50055）。会话管理、消息路由与跨服转发 |
 | [ChatServer2](./ChatServer2/) | TCP 实时消息服务实例 2（TCP :8091 / gRPC :50056）。与实例 1 共享代码，靠 `config.ini` 的 `[SelfServer]` 段区分身份 |
-| [Fool_Chat_Client](./Fool_Chat_Client/) | Qt6 桌面客户端（Fluent Design / ElaWidgetTools）。聊天、通讯录、动态、音乐、公告，以及内嵌的后台管理页 |
+| [Fool_Chat_Client](./Fool_Chat_Client/) | Qt6 桌面客户端。聊天、通讯录、动态、音乐、公告，以及内嵌的后台管理页 |
 | [fool_chat_admin_go](./fool_chat_admin_go/) | Go Web 后台管理端（:9100）。管理用户、动态、公告、通知、管理员申请，带服务监控、数据备份与 AI 助手 |
 
 ## 核心特性
