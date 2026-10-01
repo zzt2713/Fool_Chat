@@ -115,7 +115,7 @@ Qt Client ──TCP 连 ChatServer，发 1005 CHAT_LOGIN（uid+token）──▶
 - `ConfigMgr`：读 `config.ini`（Boost.PropertyTree），各服务都有自己的副本
 - gRPC client 全部走连接池（`ChatConPool` / Status / Varify 同款模式）
 
-### 共享文件不同步风险
+### 共享文件不同步风险 
 
 以下文件在多个目录有**独立副本**，改动需手动同步：
 
