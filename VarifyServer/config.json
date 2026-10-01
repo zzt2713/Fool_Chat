@@ -1,18 +1,18 @@
 {
     "email": {
-      "user": "your-email@163.com",
-      "pass": "your-email-auth-code"
+        "user": "your_email@163.com",
+        "pass": "YOUR_EMAIL_AUTH_CODE"
     },
     "mysql": {
-      "host": "127.0.0.1",
-      "port": 3308,
-      "passwd": "your_mysql_password",
-      "user": "root",
-      "database": "mhkh"
+        "host": "YOUR_DB_HOST",
+        "port": 3308,
+        "passwd": "YOUR_DB_PASSWORD",
+        "user": "root",
+        "database": "YOUR_DB_NAME"
     },
     "redis": {
-      "host": "127.0.0.1",
-      "port": 6380,
-      "passwd": "your_redis_password"
+        "host": "YOUR_REDIS_HOST",
+        "port": 6380,
+        "passwd": "YOUR_REDIS_PASSWORD"
     }
 }
