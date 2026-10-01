@@ -155,3 +155,27 @@ Qt Client ──TCP 连 ChatServer，发 1005 CHAT_LOGIN（uid+token）──▶
 
 仅使用 C++ 风格的类型转换：`static_cast<T>(val)`, `dynamic_cast<T*>(ptr)`, `reinterpret_cast<T>(ptr)`。禁止 C 风格转换。
 
+### 控件命名
+
+控件变量使用"业务含义 + 组件类型"命名，末尾体现组件类型：
+
+- 好：`_unitComboBox`, `_minimumEdit`, `_applyPushButton`
+- 不好：`_unit`, `_minimum`
+
+View 成员同时说明业务用途与实际类型，如 `_parameterTableView`、`_formulaTreeView`。
+
+Model 成员按业务职责命名，如 `_parameterInstantiationModel`、`_formulaOptionModel`。
+
+布局变量命名为 `mainLayout`，子布局按职责命名并以 `Layout` 结尾，如 `buttonLayout`。
+
+### QString 字面量
+
+不要使用 `QStringLiteral`：
+
+```cpp
+QString text = "普通字符串";              // 好
+QString text = QStringLiteral("普通字符串");  // 不好
+
+text += QString("格式：%1").arg(value);   // 好
+```
+
